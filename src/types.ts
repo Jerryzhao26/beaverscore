@@ -94,6 +94,32 @@ export interface ScoreSampleItem {
   examDate?: string;
 }
 
+export interface StudentUpdateDetail {
+  studentId: string;
+  studentName: string;
+  field: string;
+  from?: string;
+  to?: string;
+  description: string;
+}
+
+export interface ClassUpdateDetail {
+  classId: string;
+  className: string;
+  field: string;
+  from?: string;
+  to?: string;
+  description: string;
+}
+
+export interface ScoreUpdateDetail {
+  scoreId: string;
+  studentName: string;
+  className: string;
+  unit: string;
+  description: string;
+}
+
 export interface SyncNotificationData {
   id: string;
   type: 'success' | 'info' | 'warning' | 'error';
@@ -106,13 +132,29 @@ export interface SyncNotificationData {
   isInitialLoad?: boolean;
   incomingScoresCount?: number;
   outgoingScoresCount?: number;
+  incomingScoresUpdated?: number;
+  outgoingScoresUpdated?: number;
   incomingStudentsCount?: number;
+  outgoingStudentsCount?: number;
+  incomingStudentsUpdated?: number;
+  outgoingStudentsUpdated?: number;
   incomingClassesCount?: number;
+  outgoingClassesCount?: number;
+  incomingClassesUpdated?: number;
+  outgoingClassesUpdated?: number;
   totalScoresCount?: number;
   totalStudentsCount?: number;
   totalClassesCount?: number;
   incomingStudentNames?: string[];
+  outgoingStudentNames?: string[];
   incomingClassNames?: string[];
+  outgoingClassNames?: string[];
+  incomingStudentUpdates?: StudentUpdateDetail[];
+  outgoingStudentUpdates?: StudentUpdateDetail[];
+  incomingClassUpdates?: ClassUpdateDetail[];
+  outgoingClassUpdates?: ClassUpdateDetail[];
+  incomingScoreUpdates?: ScoreUpdateDetail[];
+  outgoingScoreUpdates?: ScoreUpdateDetail[];
   incomingScoreSamples?: ScoreSampleItem[];
   newDictionaries?: {
     levels?: string[];
