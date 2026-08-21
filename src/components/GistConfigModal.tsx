@@ -31,6 +31,7 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
     isSyncingGist,
     pushToGist,
     pullFromGist,
+    purePullFromGist,
     createAndLinkGist,
     getShareUrl,
     syncLogs
@@ -84,7 +85,8 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
     }
   };
 
-  const handleTestAndPull = async () => {
+  // Pure Pull Action: only downloads from cloud, never uploads local
+  const handlePurePull = async () => {
     if (!gistIdInput.trim()) {
       setFeedbackMsg({
         text: '❌ 请先填写 Gist ID 或点击新建仓库',
@@ -92,15 +94,46 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
       });
       return;
     }
-    const res = await pullFromGist(tokenInput.trim() || undefined, gistIdInput.trim(), false);
+    const res = await purePullFromGist(tokenInput.trim() || undefined, gistIdInput.trim());
     if (res.success) {
       setFeedbackMsg({
-        text: `✅ 云端握手成功！已成功拉取并融合最新全校数据档案。`,
+        text: `📥 纯粹拉取成功！已完全以云端最新档案同步覆盖本地，本地被删数据已被清理，绝无幽灵复活。`,
         type: 'success'
       });
     } else {
       setFeedbackMsg({
-        text: `❌ 拉取失败: ${res.message}`,
+        text: `❌ 纯粹拉取失败: ${res.message}`,
+        type: 'error'
+      });
+    }
+  };
+
+  // Smart Push and Merge Action
+  const handlePushAndMerge = async () => {
+    if (!tokenInput.trim()) {
+      setFeedbackMsg({
+        text: '❌ 上传与智能合并需要提供有效的 GitHub Token',
+        type: 'error'
+      });
+      return;
+    }
+    if (!gistIdInput.trim()) {
+      setFeedbackMsg({
+        text: '❌ 请先填写 Gist ID',
+        type: 'error'
+      });
+      return;
+    }
+    const res = await pushToGist(tokenInput.trim(), gistIdInput.trim());
+    if (res.success) {
+      const incoming = res.report?.incomingScoresCount || 0;
+      setFeedbackMsg({
+        text: `📤 智能合并同步成功！${incoming > 0 ? `已同时融合了云端来自其他老师的 ${incoming} 条新成绩。` : '本地数据与删除状态已完整同步至云端。'}`,
+        type: 'success'
+      });
+    } else {
+      setFeedbackMsg({
+        text: `❌ 同步失败: ${res.message}`,
         type: 'error'
       });
     }
@@ -235,17 +268,31 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
           {/* TAB 1: CONFIG */}
           {activeTab === 'config' && (
             <form onSubmit={handleSaveConfig} className="space-y-4">
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1.5">
-                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-2">
+                <div className="font-bold text-slate-800 flex items-center gap-1.5 text-sm">
                   <ShieldCheck className="w-4 h-4 text-indigo-600" />
-                  工作机制说明：
+                  数据保存与多教师并发协同规则说明：
                 </div>
-                <p>
-                  1. 老师录入自己班级的成绩后，点击<strong>「保存并同步到云端」</strong>，系统会自动将本次录入与云端合并并上传。
-                </p>
-                <p>
-                  2. 多个老师录入不同班级互不影响；想要查看同事刚录入的最新数据，随时点击页面顶部的<strong>「🔄 刷新获取云端数据」</strong>即可。
-                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+                  <div className="bg-white p-3 rounded-lg border border-slate-200 space-y-1">
+                    <div className="font-semibold text-slate-800 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      1. 新增与多老师并发合并
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      若 <strong>A老师录入了10条</strong> 且 <strong>B老师录入了5条</strong>，当任何一位老师保存时，系统会<strong>先从云端拉取最新数据并在内存做唯一性智能合并</strong>，再将合并后的 <strong>15条全部写回云端</strong>，绝不丢失任何老师的录入！
+                    </p>
+                  </div>
+                  <div className="bg-white p-3 rounded-lg border border-slate-200 space-y-1">
+                    <div className="font-semibold text-slate-800 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                      2. 删除与防“复活”机制
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      当您删除某条成绩或学员时，系统会为该实体植入<strong>带时间戳的永久删除标记（墓碑）</strong>并同步至云端，后续无论是主动拉取还是后台自动刷新，<strong>被删除数据均不会再次复活</strong>。
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div>
@@ -325,17 +372,35 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={handleTestAndPull}
-                  disabled={isSyncingGist || !gistIdInput.trim()}
-                  className="w-full sm:w-auto px-4 py-2 border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold flex items-center justify-center transition cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isSyncingGist ? 'animate-spin' : ''}`} />
-                  测试连接并立即拉取云端数据
-                </button>
+              {/* Action Buttons: Pure Pull vs Smart Push & Merge */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <div className="text-xs font-bold text-slate-700">手动即时操作：</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePurePull}
+                    disabled={isSyncingGist || !gistIdInput.trim()}
+                    className="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 rounded-lg text-xs font-semibold flex items-center justify-center transition cursor-pointer shadow-2xs"
+                    title="从云端纯粹拉取最新数据覆盖本地，不逆向上传任何本地临时内容"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 mr-1.5 text-sky-600 ${isSyncingGist ? 'animate-spin' : ''}`} />
+                    📥 纯粹从云端拉取覆盖本地
+                  </button>
 
+                  <button
+                    type="button"
+                    onClick={handlePushAndMerge}
+                    disabled={isSyncingGist || !gistIdInput.trim() || !tokenInput.trim()}
+                    className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center transition cursor-pointer shadow-2xs"
+                    title="将本地新录入数据与云端智能合并后上传，保留多位老师的全部新增"
+                  >
+                    <Check className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
+                    📤 智能合并同步至云端
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex justify-end">
                 <button
                   type="submit"
                   className="w-full sm:w-auto px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"

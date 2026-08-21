@@ -68,6 +68,7 @@ interface AppContextType {
   closeGistConfigModal: () => void;
   pushToGist: (customToken?: string, customGistId?: string) => Promise<GistSyncResult & { report?: MergeReport }>;
   pullFromGist: (customToken?: string, customGistId?: string, silent?: boolean) => Promise<GistSyncResult>;
+  purePullFromGist: (customToken?: string, customGistId?: string) => Promise<GistSyncResult>;
   syncAndMergeGist: () => Promise<GistSyncResult & { report?: MergeReport }>;
   manualRefreshFromCloud: () => Promise<{ success: boolean; message: string; mergeReport?: MergeReport }>;
   manualSaveAndPushToCloud: () => Promise<{ success: boolean; message: string; mergeReport?: MergeReport }>;
@@ -166,6 +167,29 @@ const STORAGE_KEYS = {
   DELETED_ENTITIES: 'training_scores_deleted_entities_v2',
 };
 
+const safeTime = (val: any): number => {
+  if (!val) return 0;
+  const t = new Date(val).getTime();
+  return isNaN(t) ? 0 : t;
+};
+
+const getScoreRecordTime = (r: ScoreRecord): number => {
+  return Math.max(
+    safeTime(r.updatedAt),
+    safeTime(r.recordedAt),
+    safeTime(r.examDate)
+  );
+};
+
+const getScoreSignature = (r: Partial<ScoreRecord>): string => {
+  const std = (r.studentId || r.studentName || '').trim();
+  const date = (r.examDate || '').trim();
+  const lvl = (r.level || '').trim();
+  const unit = (r.unit || '').trim();
+  const title = (r.examTitle || '').trim();
+  return `sig_${std}_${date}_${lvl}_${unit}_${title}`;
+};
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -201,7 +225,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return list.filter((c: ClassGroup) => {
         const delTime = delClasses[c.id] || (c.name ? delClasses[c.name] : undefined);
         if (!delTime) return true;
-        const cTime = c.updatedAt ? new Date(c.updatedAt).getTime() : 0;
+        const cTime = safeTime(c.updatedAt);
         return cTime > delTime;
       });
     } catch {
@@ -219,9 +243,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const parsed = saved ? JSON.parse(saved) : null;
       const list: Student[] = Array.isArray(parsed) ? parsed : INITIAL_STUDENTS;
       return list.filter((s: Student) => {
-        const delTime = delStudents[s.id];
+        const delTime = delStudents[s.id] || (s.name ? delStudents[s.name] : undefined);
         if (!delTime) return true;
-        const sTime = s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+        const sTime = safeTime(s.updatedAt);
         return sTime > delTime;
       });
     } catch {
@@ -234,19 +258,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const savedTomb = localStorage.getItem(STORAGE_KEYS.DELETED_ENTITIES);
       const parsedTomb = savedTomb ? JSON.parse(savedTomb) : null;
       const delScores = parsedTomb?.scoreRecords || {};
+      const delStudents = parsedTomb?.students || {};
 
       const saved = localStorage.getItem(STORAGE_KEYS.RECORDS);
       const parsed = saved ? JSON.parse(saved) : null;
       const list: ScoreRecord[] = Array.isArray(parsed) ? parsed : INITIAL_SCORE_RECORDS;
       return list
         .filter((r: ScoreRecord) => {
-          const delTime = delScores[r.id];
-          if (!delTime) return true;
-          const rTime = Math.max(
-            r.updatedAt ? new Date(r.updatedAt).getTime() : 0,
-            r.recordedAt ? new Date(r.recordedAt).getTime() : 0
-          );
-          return rTime > delTime;
+          const sig = getScoreSignature(r);
+          const delTime = (r.id ? delScores[r.id] : undefined) || delScores[sig];
+          const rTime = getScoreRecordTime(r);
+
+          if (delTime && rTime <= delTime) {
+            return false;
+          }
+
+          if (r.studentId && delStudents[r.studentId]) {
+            if (rTime <= delStudents[r.studentId]) {
+              return false;
+            }
+          }
+
+          return true;
         })
         .map((r: any) => ({
           ...r,
@@ -394,16 +427,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const filtered = data.classes.filter((c: ClassGroup) => {
         const delTime = activeDel.classes[c.id] || (c.name ? activeDel.classes[c.name] : undefined);
         if (!delTime) return true;
-        const cTime = c.updatedAt ? new Date(c.updatedAt).getTime() : 0;
+        const cTime = safeTime(c.updatedAt);
         return cTime > delTime;
       });
       setClasses(filtered);
     }
     if (Array.isArray(data.students)) {
       const filtered = data.students.filter((s: Student) => {
-        const delTime = activeDel.students[s.id];
+        const delTime = activeDel.students[s.id] || (s.name ? activeDel.students[s.name] : undefined);
         if (!delTime) return true;
-        const sTime = s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+        const sTime = safeTime(s.updatedAt);
         return sTime > delTime;
       });
       setStudents(filtered);
@@ -411,13 +444,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (Array.isArray(data.scoreRecords)) {
       const filtered = data.scoreRecords
         .filter((r: ScoreRecord) => {
-          const delTime = activeDel.scoreRecords[r.id];
-          if (!delTime) return true;
-          const rTime = Math.max(
-            r.updatedAt ? new Date(r.updatedAt).getTime() : 0,
-            r.recordedAt ? new Date(r.recordedAt).getTime() : 0
-          );
-          return rTime > delTime;
+          const sig = getScoreSignature(r);
+          const delTime = (r.id ? activeDel.scoreRecords[r.id] : undefined) || activeDel.scoreRecords[sig];
+          const rTime = getScoreRecordTime(r);
+
+          if (delTime && rTime <= delTime) {
+            return false;
+          }
+
+          if (r.studentId && activeDel.students[r.studentId]) {
+            if (rTime <= activeDel.students[r.studentId]) {
+              return false;
+            }
+          }
+
+          return true;
         })
         .map((r: any) => ({
           ...r,
@@ -648,16 +689,100 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             message: res.message || '请检查 Gist ID 是否正确或网络是否畅通',
             timestamp: new Date().toLocaleTimeString('zh-CN'),
             teacherName: gistConfig.teacherName,
-            gistId: gistIdToUse
           });
         }
       }
+
       return res;
+    } catch (err: any) {
+      const errMsg = `❌ 拉取异常: ${err?.message || '网络连接超时'}`;
+      if (!silent) {
+        setGistLastMessage(errMsg);
+      }
+      return { success: false, message: errMsg };
     } finally {
-      if (!silent) setIsSyncingGist(false);
-      setTimeout(() => {
-        isPullingRef.current = false;
-      }, 800);
+      if (!silent) {
+        setIsSyncingGist(false);
+      }
+      isPullingRef.current = false;
+    }
+  };
+
+  /**
+   * Pure Pull: Purely downloads cloud Gist data and overwrites local view as single source of truth,
+   * without uploading or retaining unpersisted local differences.
+   */
+  const purePullFromGist = async (
+    customToken?: string,
+    customGistId?: string
+  ): Promise<GistSyncResult> => {
+    const tokenToUse = customToken !== undefined ? customToken : gistConfig.token;
+    const gistIdToUse = customGistId || gistConfig.gistId;
+    const filenameToUse = gistConfig.filename || DEFAULT_GIST_FILENAME;
+
+    if (!gistIdToUse) {
+      return { success: false, message: '请先提供或绑定 Gist ID' };
+    }
+
+    isPullingRef.current = true;
+    setIsSyncingGist(true);
+    setGistLastMessage('正在从 GitHub Gist 纯粹拉取云端数据并刷新本地...');
+
+    try {
+      const res = await pullDataFromGist(tokenToUse, gistIdToUse, filenameToUse);
+      if (res.success && res.data) {
+        applyMergedData(res.data);
+
+        const nowIso = new Date().toISOString();
+        updateGistConfig({
+          token: tokenToUse,
+          gistId: gistIdToUse,
+          lastSyncedAt: nowIso,
+        });
+
+        const studentsCount = res.data.students?.length || 0;
+        const scoresCount = res.data.scoreRecords?.length || 0;
+        const classesCount = res.data.classes?.length || 0;
+
+        const successMsg = `✅ 纯粹拉取成功！已用云端权威数据完全同步本地（共 ${studentsCount} 位学员，${scoresCount} 条测评记录，${classesCount} 个班级）`;
+        setGistLastMessage(successMsg);
+
+        addSyncLog({
+          type: 'pull',
+          success: true,
+          message: `执行纯拉取操作：完全以云端数据覆盖本地，共 ${scoresCount} 条成绩、${studentsCount} 位学员`,
+          operatorTeacher: gistConfig.teacherName || '任课教师',
+          incomingCount: scoresCount,
+          totalRecordsCount: scoresCount,
+        });
+
+        showSyncNotification({
+          id: `sync_pure_pull_${Date.now()}`,
+          type: 'success',
+          action: 'pull',
+          title: '📥 纯粹拉取完成 · 本地已与云端完全一致',
+          message: `已从云端 Gist 下载最新完整档案并直接更新本地。全校共 ${studentsCount} 位学员、${scoresCount} 条成绩记录、${classesCount} 个班级。本地已废弃或多余数据均已清理。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: gistConfig.teacherName,
+          gistId: gistIdToUse,
+          totalScoresCount: scoresCount,
+          totalStudentsCount: studentsCount,
+          totalClassesCount: classesCount,
+        });
+
+        return { success: true, message: successMsg, data: res.data };
+      } else {
+        const errMsg = `❌ 纯粹拉取失败: ${res.message || '未知错误'}`;
+        setGistLastMessage(errMsg);
+        return { success: false, message: errMsg };
+      }
+    } catch (err: any) {
+      const errMsg = `❌ 拉取异常: ${err?.message || '网络连接超时'}`;
+      setGistLastMessage(errMsg);
+      return { success: false, message: errMsg };
+    } finally {
+      setIsSyncingGist(false);
+      isPullingRef.current = false;
     }
   };
 
@@ -1078,9 +1203,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteScoreRecord = (id: string) => {
     const now = Date.now();
+    const target = scoreRecords.find(item => item.id === id);
+    const sig = target ? getScoreSignature(target) : '';
+
     setDeletedEntities(prev => ({
       ...prev,
-      scoreRecords: { ...(prev.scoreRecords || {}), [id]: now }
+      scoreRecords: {
+        ...(prev.scoreRecords || {}),
+        [id]: now,
+        ...(sig ? { [sig]: now } : {})
+      }
     }));
     setScoreRecords(prev => prev.filter(item => item.id !== id));
   };
@@ -1090,7 +1222,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const recordsToDelete = scoreRecords.filter(item => item.batchId === batchId);
     setDeletedEntities(prev => {
       const nextScoresDel = { ...(prev.scoreRecords || {}) };
-      recordsToDelete.forEach(r => { nextScoresDel[r.id] = now; });
+      recordsToDelete.forEach(r => {
+        nextScoresDel[r.id] = now;
+        const sig = getScoreSignature(r);
+        if (sig) nextScoresDel[sig] = now;
+      });
       return {
         ...prev,
         scoreRecords: nextScoresDel,
@@ -1888,11 +2024,31 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteStudent = (id: string) => {
     const now = Date.now();
-    setDeletedEntities(prev => ({
-      ...prev,
-      students: { ...(prev.students || {}), [id]: now }
-    }));
+    const targetStudent = students.find(s => s.id === id);
+    const relatedScores = scoreRecords.filter(r => r.studentId === id);
+
+    setDeletedEntities(prev => {
+      const nextStudentsDel = {
+        ...(prev.students || {}),
+        [id]: now,
+        ...(targetStudent?.name ? { [targetStudent.name]: now } : {})
+      };
+      const nextScoresDel = { ...(prev.scoreRecords || {}) };
+      relatedScores.forEach(r => {
+        nextScoresDel[r.id] = now;
+        const sig = getScoreSignature(r);
+        if (sig) nextScoresDel[sig] = now;
+      });
+
+      return {
+        ...prev,
+        students: nextStudentsDel,
+        scoreRecords: nextScoresDel,
+      };
+    });
+
     setStudents(prev => prev.filter(s => s.id !== id));
+    setScoreRecords(prev => prev.filter(r => r.studentId !== id));
   };
 
   const batchAddStudents = (newStudentsList: Omit<Student, 'id'>[]) => {
@@ -1908,15 +2064,32 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const batchDeleteStudents = (studentIds: string[]) => {
     if (!studentIds || studentIds.length === 0) return;
     const now = Date.now();
+    const relatedScores = scoreRecords.filter(r => studentIds.includes(r.studentId));
+
     setDeletedEntities(prev => {
       const nextStudentsDel = { ...(prev.students || {}) };
-      studentIds.forEach(sid => { nextStudentsDel[sid] = now; });
+      studentIds.forEach(sid => {
+        nextStudentsDel[sid] = now;
+        const sObj = students.find(s => s.id === sid);
+        if (sObj?.name) nextStudentsDel[sObj.name] = now;
+      });
+
+      const nextScoresDel = { ...(prev.scoreRecords || {}) };
+      relatedScores.forEach(r => {
+        nextScoresDel[r.id] = now;
+        const sig = getScoreSignature(r);
+        if (sig) nextScoresDel[sig] = now;
+      });
+
       return {
         ...prev,
         students: nextStudentsDel,
+        scoreRecords: nextScoresDel,
       };
     });
+
     setStudents(prev => prev.filter(s => !studentIds.includes(s.id)));
+    setScoreRecords(prev => prev.filter(r => !studentIds.includes(r.studentId)));
   };
 
   const transferStudent = (
@@ -2313,6 +2486,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         closeGistConfigModal,
         pushToGist,
         pullFromGist,
+        purePullFromGist,
         syncAndMergeGist,
         manualRefreshFromCloud,
         manualSaveAndPushToCloud,

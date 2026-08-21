@@ -326,8 +326,8 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
                         </span>
                       </td>
                       <td className="py-2.5 px-3">
-                        <div className="font-semibold text-slate-800">{r.level} {r.unit}</div>
-                        <div className="text-[11px] text-slate-400">{r.examTitle}</div>
+                        <div className="font-bold text-slate-800 font-mono text-xs">{r.examTitle || `${r.level} ${r.unit}`}</div>
+                        {r.className && <div className="text-[11px] text-slate-400">{r.className}</div>}
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         {r.attendance === 'present' && typeof r.score === 'number' ? (

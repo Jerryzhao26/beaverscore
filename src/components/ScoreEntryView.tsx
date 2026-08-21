@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { ScoreRecord, Student } from '../types';
-import { normalizeExamCategory, getExamDateTimestamp, compareScoreRecordsByExamDateAsc } from '../utils/analysis';
+import { normalizeExamCategory, getExamDateTimestamp, compareScoreRecordsByExamDateAsc, formatExamTitle } from '../utils/analysis';
 import { PUBLIC_SCHOOL_GRADES, PUBLIC_SCHOOL_EXAM_UNITS } from '../data/initialData';
 import confetti from 'canvas-confetti';
 import {
@@ -66,7 +66,6 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
   const [selectedClassId, setSelectedClassId] = useState<string>(() => classes?.[0]?.id || '');
   const [selectedLevel, setSelectedLevel] = useState<string>('BF1');
   const [selectedUnit, setSelectedUnit] = useState<string>('U1 (Unit 1)');
-  const [examTitle, setExamTitle] = useState<string>('');
   const [examDate, setExamDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [maxScore, setMaxScore] = useState<number>(100);
   const [selectedTeacher, setSelectedTeacher] = useState<string>('');
@@ -126,24 +125,11 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
       setSelectedTeacher(currentCls.teacherName || teachers?.[0] || '');
       if (examCategory === 'public_school') {
         setSelectedUnit(prev => (PUBLIC_SCHOOL_EXAM_UNITS.includes(prev) ? prev : PUBLIC_SCHOOL_EXAM_UNITS[0]));
-        setExamTitle(`${currentCls.name} 公校英语期中考试`);
       } else {
         setSelectedUnit(prev => (units.includes(prev) ? prev : (units[0] || 'U1 (Unit 1)')));
-        setExamTitle(`${currentCls.name} ${selectedUnit} 阶段测验`);
       }
     }
   }, [selectedClassId, classes, examCategory]);
-
-  useEffect(() => {
-    const currentCls = (classes || []).find(c => c.id === selectedClassId);
-    if (currentCls) {
-      if (examCategory === 'public_school') {
-        setExamTitle(`${currentCls.name} 公校${selectedUnit}`);
-      } else {
-        setExamTitle(`${currentCls.name} ${selectedUnit} 阶段测验`);
-      }
-    }
-  }, [selectedUnit, examCategory]);
 
   useEffect(() => {
     if (!selectedClassId) {
@@ -288,6 +274,12 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
     const newRecords: Omit<ScoreRecord, 'id' | 'recordedAt'>[] = actionableRows.map(r => {
       const studentGrade = r.schoolGrade || r.student.schoolGrade || '三上';
       const recordLevel = examCategory === 'public_school' ? studentGrade : selectedLevel;
+      const computedTitle = formatExamTitle({
+        examCategory,
+        level: selectedLevel,
+        unit: selectedUnit,
+        schoolGrade: studentGrade
+      });
 
       return {
         classId: selectedClassId,
@@ -299,7 +291,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
         level: recordLevel,
         schoolGrade: examCategory === 'public_school' ? studentGrade : undefined,
         unit: selectedUnit,
-        examTitle: examTitle || `${className} ${selectedUnit} 测验`,
+        examTitle: computedTitle,
         examDate,
         maxScore,
         score: r.attendance === 'present' ? Number(r.score) : null,
@@ -501,8 +493,6 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
               onClick={() => {
                 setExamCategory('institutional');
                 setSelectedUnit(units[0] || 'U1 (Unit 1)');
-                const currentCls = classes.find(c => c.id === selectedClassId);
-                if (currentCls) setExamTitle(`${currentCls.name} ${units[0] || 'U1'} 阶段测验`);
               }}
               className={`p-3.5 rounded-xl border text-left flex items-start space-x-3 transition cursor-pointer ${
                 examCategory === 'institutional'
@@ -540,8 +530,6 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
               onClick={() => {
                 setExamCategory('public_school');
                 setSelectedUnit(PUBLIC_SCHOOL_EXAM_UNITS[0] || '期中考试');
-                const currentCls = classes.find(c => c.id === selectedClassId);
-                if (currentCls) setExamTitle(`${currentCls?.name || ''} 公校英语期中考试`);
               }}
               className={`p-3.5 rounded-xl border text-left flex items-start space-x-3 transition cursor-pointer ${
                 examCategory === 'public_school'
@@ -690,16 +678,19 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
         </div>
 
         <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-          <div className="w-full sm:w-2/3 flex items-center space-x-2">
-            <span className="text-slate-500 font-medium whitespace-nowrap">测验标题:</span>
-            <input
-              type="text"
-              id="input-exam-title"
-              value={examTitle}
-              onChange={e => setExamTitle(e.target.value)}
-              placeholder={examCategory === 'public_school' ? '例如：BF2班 公校英语期中考试' : '例如：BF2 进阶班 Unit 3 阶段测验'}
-              className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-slate-800 text-xs focus:bg-white focus:ring-1 focus:ring-indigo-500"
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-slate-500 font-medium">测验标识生成规则:</span>
+            {examCategory === 'public_school' ? (
+              <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200">
+                <School className="w-3.5 h-3.5 text-emerald-600" />
+                <span>公校测试 · 年级 + 考项类型（如：四上{selectedUnit}）</span>
+              </div>
+            ) : (
+              <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-800 font-semibold border border-indigo-200">
+                <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                <span>机构测试 · 级别 + 单元（当前生成：{formatExamTitle({ examCategory: 'institutional', level: selectedLevel, unit: selectedUnit })}）</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
@@ -707,7 +698,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
             <select
               value={maxScore}
               onChange={e => setMaxScore(Number(e.target.value))}
-              className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-md text-xs font-semibold text-slate-700 cursor-pointer"
+              className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-md text-xs font-semibold text-slate-700 cursor-pointer"
             >
               <option value={100}>100 分制</option>
               <option value={120}>120 分制</option>

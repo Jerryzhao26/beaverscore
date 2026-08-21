@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { ScoreRecord, Student, ExamCategory } from '../types';
-import { exportToCSV, normalizeExamCategory, getExamCategoryLabel, compareScoreRecordsByExamDateDesc } from '../utils/analysis';
+import { exportToCSV, normalizeExamCategory, getExamCategoryLabel, compareScoreRecordsByExamDateDesc, formatExamTitle } from '../utils/analysis';
 import { PUBLIC_SCHOOL_GRADES, PUBLIC_SCHOOL_EXAM_UNITS } from '../data/initialData';
 import { StudentReportModal } from './StudentReportModal';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -200,7 +200,16 @@ export const ScoreQueryView: React.FC = () => {
   const handleSaveEditRecord = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRecord) return;
-    updateScoreRecord(editingRecord.id, editingRecord);
+    const computedTitle = formatExamTitle({
+      examCategory: editingRecord.examCategory,
+      level: editingRecord.level,
+      unit: editingRecord.unit,
+      schoolGrade: editingRecord.schoolGrade
+    });
+    updateScoreRecord(editingRecord.id, {
+      ...editingRecord,
+      examTitle: computedTitle
+    });
     setEditingRecord(null);
   };
 
@@ -518,11 +527,11 @@ export const ScoreQueryView: React.FC = () => {
                           >
                             {getExamCategoryLabel(record.examCategory)}
                           </span>
-                          <span className="inline-block px-1.5 py-0.5 rounded font-bold bg-slate-100 text-slate-700 text-[10px]">
-                            {record.level}
+                          <span className="inline-block px-1.5 py-0.5 rounded font-bold font-mono bg-slate-800 text-white text-[10px]">
+                            {record.examTitle || `${record.level}${record.unit}`}
                           </span>
                         </div>
-                        <div className="text-slate-700 font-medium">{record.unit}</div>
+                        <div className="text-slate-500 text-[11px]">{record.unit}</div>
                       </td>
 
                       <td className="py-3 px-3 text-center">
@@ -900,6 +909,18 @@ export const ScoreQueryView: React.FC = () => {
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono"
                   />
                 </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex items-center justify-between text-xs">
+                <span className="text-slate-500 font-medium">自动生成测验标识:</span>
+                <span className="font-bold text-indigo-700 bg-white px-2.5 py-1 rounded border border-slate-200">
+                  {formatExamTitle({
+                    examCategory: editingRecord.examCategory,
+                    level: editingRecord.level,
+                    unit: editingRecord.unit,
+                    schoolGrade: editingRecord.schoolGrade
+                  })}
+                </span>
               </div>
 
               <div>

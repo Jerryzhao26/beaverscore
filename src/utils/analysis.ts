@@ -13,6 +13,37 @@ export function getExamCategoryLabel(cat?: string): string {
 }
 
 /**
+ * Formats standard exam titles:
+ * - Institutional (机构测试): Level + Unit (e.g., "E1U2", "BF1U1", "BF2期中综合测验")
+ * - Public School (公校测试): Grade + Type (e.g., "四上期中考试", "三上期末考试")
+ */
+export function formatExamTitle(params: {
+  examCategory?: 'institutional' | 'public_school' | string;
+  level?: string;
+  unit?: string;
+  schoolGrade?: string;
+}): string {
+  const cat = normalizeExamCategory(params.examCategory);
+  if (cat === 'public_school') {
+    const grade = (params.schoolGrade || params.level || '三上').trim();
+    const type = (params.unit || '期中考试').trim();
+    if (type.startsWith(grade)) {
+      return type;
+    }
+    return `${grade}${type}`;
+  } else {
+    const lvl = (params.level || 'BF1').trim();
+    let u = (params.unit || 'U1').trim();
+    // If unit matches standard "U1 (Unit 1)" or "u1", condense it to "U1"
+    const match = u.match(/^([uU]\d+)/);
+    if (match) {
+      u = match[1].toUpperCase();
+    }
+    return `${lvl}${u}`;
+  }
+}
+
+/**
  * Safely parses an exam date string (YYYY-MM-DD, YYYY/MM/DD, or ISO) into a comparable numeric timestamp.
  */
 export function getExamDateTimestamp(dateStr?: string): number {

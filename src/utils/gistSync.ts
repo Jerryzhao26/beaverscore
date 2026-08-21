@@ -284,31 +284,67 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
     teachers: { ...(remoteDel.teachers || {}), ...(localDel.teachers || {}) },
   };
 
+  // Safe timestamp parser to avoid NaN comparisons
+  const safeTime = (val: any): number => {
+    if (!val) return 0;
+    const t = new Date(val).getTime();
+    return isNaN(t) ? 0 : t;
+  };
+
+  const getScoreRecordTime = (sc: ScoreRecord): number => {
+    return Math.max(
+      safeTime(sc.updatedAt),
+      safeTime(sc.recordedAt),
+      safeTime(sc.examDate)
+    );
+  };
+
+  const getScoreSignature = (sc: Partial<ScoreRecord>): string => {
+    const std = (sc.studentId || sc.studentName || '').trim();
+    const date = (sc.examDate || '').trim();
+    const lvl = (sc.level || '').trim();
+    const unit = (sc.unit || '').trim();
+    const title = (sc.examTitle || '').trim();
+    return `sig_${std}_${date}_${lvl}_${unit}_${title}`;
+  };
+
   const isClassDeleted = (c: ClassGroup): boolean => {
     if (!c || (!c.id && !c.name)) return true;
     const delTime = (c.id ? mergedDel.classes[c.id] : undefined) || (c.name ? mergedDel.classes[c.name] : undefined);
     if (!delTime) return false;
-    const classTime = c.updatedAt ? new Date(c.updatedAt).getTime() : 0;
+    const classTime = safeTime(c.updatedAt);
     return classTime <= delTime;
   };
 
   const isStudentDeleted = (s: Student): boolean => {
     if (!s || !s.id) return true;
-    const delTime = mergedDel.students[s.id];
+    const delTime = mergedDel.students[s.id] || (s.name ? mergedDel.students[s.name] : undefined);
     if (!delTime) return false;
-    const stuTime = s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+    const stuTime = safeTime(s.updatedAt);
     return stuTime <= delTime;
   };
 
   const isScoreDeleted = (sc: ScoreRecord): boolean => {
-    if (!sc || !sc.id) return true;
-    const delTime = mergedDel.scoreRecords[sc.id];
-    if (!delTime) return false;
-    const recTime = Math.max(
-      sc.updatedAt ? new Date(sc.updatedAt).getTime() : 0,
-      sc.recordedAt ? new Date(sc.recordedAt).getTime() : 0
-    );
-    return recTime <= delTime;
+    if (!sc || (!sc.id && !sc.studentId)) return true;
+    
+    // Check direct score deletion by ID or by test signature
+    const sig = getScoreSignature(sc);
+    const delTime = (sc.id ? mergedDel.scoreRecords[sc.id] : undefined) || mergedDel.scoreRecords[sig];
+    const recTime = getScoreRecordTime(sc);
+
+    if (delTime && recTime <= delTime) {
+      return true;
+    }
+
+    // Check if the student belonging to this score was deleted
+    if (sc.studentId && mergedDel.students[sc.studentId]) {
+      const studentDelTime = mergedDel.students[sc.studentId];
+      if (recTime <= studentDelTime) {
+        return true;
+      }
+    }
+
+    return false;
   };
 
   if (!remoteData || (!remoteData.scoreRecords && !remoteData.students && !remoteData.classes)) {
