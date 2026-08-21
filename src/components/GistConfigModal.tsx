@@ -374,30 +374,33 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
 
               {/* Action Buttons: Pure Pull vs Smart Push & Merge */}
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                <div className="text-xs font-bold text-slate-700">手动即时操作：</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={handlePurePull}
-                    disabled={isSyncingGist || !gistIdInput.trim()}
-                    className="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 rounded-lg text-xs font-semibold flex items-center justify-center transition cursor-pointer shadow-2xs"
-                    title="从云端纯粹拉取最新数据覆盖本地，不逆向上传任何本地临时内容"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 mr-1.5 text-sky-600 ${isSyncingGist ? 'animate-spin' : ''}`} />
-                    📥 纯粹从云端拉取覆盖本地
-                  </button>
-
+                <div className="text-xs font-bold text-slate-700">两大核心云端操作：</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     onClick={handlePushAndMerge}
                     disabled={isSyncingGist || !gistIdInput.trim() || !tokenInput.trim()}
-                    className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center transition cursor-pointer shadow-2xs"
-                    title="将本地新录入数据与云端智能合并后上传，保留多位老师的全部新增"
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="【同步合并】将本机的全部新增、修改及【删除操作】推送到云端 Gist，并融合其他老师的数据"
                   >
-                    <Check className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
-                    📤 智能合并同步至云端
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingGist ? 'animate-spin' : ''}`} />
+                    {isSyncingGist ? '同步合并中...' : '⬆️ 同步合并 (Push & Merge)'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handlePurePull}
+                    disabled={isSyncingGist || !gistIdInput.trim()}
+                    className="px-3.5 py-2.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shadow-2xs"
+                    title="【拉取数据】从云端 Gist 下载最新全校班级、学员与成绩档案并刷新本地"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-sky-600 ${isSyncingGist ? 'animate-spin' : ''}`} />
+                    ⬇️ 拉取数据 (Pull)
                   </button>
                 </div>
+                <p className="text-[11px] text-slate-500 pt-0.5">
+                  💡 <strong>提示</strong>：执行过删除操作后，点击<strong>【同步合并】</strong>即可将删除标记牢固写入云端；其他老师点击<strong>【拉取数据】</strong>即可同步移除对应条目。
+                </p>
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex justify-end">

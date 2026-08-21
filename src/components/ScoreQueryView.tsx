@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { ScoreRecord, Student, ExamCategory } from '../types';
+import { CloudSyncButtons } from './CloudSyncButtons';
 import { exportToCSV, normalizeExamCategory, getExamCategoryLabel, compareScoreRecordsByExamDateDesc, formatExamTitle } from '../utils/analysis';
 import { PUBLIC_SCHOOL_GRADES, PUBLIC_SCHOOL_EXAM_UNITS } from '../data/initialData';
 import { StudentReportModal } from './StudentReportModal';
@@ -225,6 +226,9 @@ export const ScoreQueryView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Top Quick Cloud Sync Action Bar */}
+      <CloudSyncButtons variant="toolbar" />
+
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>

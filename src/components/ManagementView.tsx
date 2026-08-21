@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Student, ClassGroup } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
+import { CloudSyncButtons } from './CloudSyncButtons';
 import {
   Users,
   GraduationCap,
@@ -548,6 +549,9 @@ export const ManagementView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Top Direct Cloud Sync Action Bar */}
+      <CloudSyncButtons variant="toolbar" />
+
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl text-xs font-semibold shadow-2xl border border-slate-700 flex items-center justify-between animate-in fade-in slide-in-from-top duration-200 max-w-md">
@@ -577,7 +581,7 @@ export const ManagementView: React.FC = () => {
               </h2>
             </div>
             <p className="text-sm text-slate-500 mt-1">
-              管理全校班级、在册学员档案、在读级别梯队，并支持一键主动“保存并同步”至云端 Gist 呈现可视化变动报告。
+              管理全校班级、在册学员档案、在读级别梯队，并支持一键“同步合并”至云端 Gist 呈现可视化变动报告。
             </p>
           </div>
 
@@ -630,8 +634,8 @@ export const ManagementView: React.FC = () => {
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Database className="w-3.5 h-3.5 mr-1" />
-              Gist云同步协作
+              <Cloud className="w-3.5 h-3.5 mr-1" />
+              云端同步与配置
             </button>
 
             <button
@@ -1592,28 +1596,33 @@ export const ManagementView: React.FC = () => {
 
             <div className="flex items-center space-x-2">
               <button
+                type="button"
                 onClick={async () => {
                   const res = await manualRefreshFromCloud();
                   showToast(res.message);
                 }}
                 disabled={isSyncingGist}
-                className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center transition cursor-pointer"
+                className="px-3.5 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                title="【拉取数据】从云端 Gist 下载最新全校班级、学员与成绩档案并刷新本地"
               >
-                从云端拉取刷新
+                <Download className="w-3.5 h-3.5 text-sky-600" />
+                拉取数据 (Pull)
               </button>
 
               <button
+                type="button"
                 onClick={async () => {
                   const res = await manualSaveAndPushToCloud();
                   showToast(res.message);
                 }}
                 disabled={isSyncingGist}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white rounded-lg text-xs font-semibold flex items-center transition cursor-pointer"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                title="【同步合并】将本机的全部新增、修改及【删除操作】推送到云端 Gist，并融合其他老师的数据"
               >
                 <RefreshCw
-                  className={`w-3.5 h-3.5 mr-1.5 ${isSyncingGist ? 'animate-spin' : ''}`}
+                  className={`w-3.5 h-3.5 ${isSyncingGist ? 'animate-spin' : ''}`}
                 />
-                立即双向协同同步
+                {isSyncingGist ? '同步合并中...' : '同步合并 (Push)'}
               </button>
             </div>
           </div>

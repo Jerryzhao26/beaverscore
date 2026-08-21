@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { ScoreRecord, Student } from '../types';
+import { CloudSyncButtons } from './CloudSyncButtons';
 import { normalizeExamCategory, getExamDateTimestamp, compareScoreRecordsByExamDateAsc, formatExamTitle } from '../utils/analysis';
 import { PUBLIC_SCHOOL_GRADES, PUBLIC_SCHOOL_EXAM_UNITS } from '../data/initialData';
 import confetti from 'canvas-confetti';
@@ -369,8 +370,8 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
 
   return (
     <div className="space-y-5">
-      {/* Top Cloud Collaboration Status Bar */}
-      <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      {/* Top Direct Cloud Action Bar */}
+      <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-center space-x-3">
           <div className={`p-2 rounded-lg shrink-0 ${
             isCloudConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
@@ -383,47 +384,22 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                 isCloudConnected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
               }`}>
                 <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${isCloudConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-                {isCloudConnected ? 'GitHub Gist 私有云已连接' : '本地单机模式 (未配置云端)'}
+                {isCloudConnected ? '云端协作已就绪' : '本地单机模式 (未配置云端)'}
               </span>
               {isCloudConnected && (
                 <span className="text-xs font-mono text-slate-500 hidden md:inline">
-                  ID: {gistConfig.gistId.slice(0, 10)}...
+                  教师: {gistConfig.teacherName || '任课教师'} | Gist: {gistConfig.gistId.slice(0, 8)}...
                 </span>
               )}
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              {isCloudConnected ? (
-                <>
-                  每次录入后点击保存即会自动将数据加密上传并合并至云端；如需查看同事刚录入的班级，点击右侧
-                  <strong className="text-indigo-600 font-semibold">【刷新云端】</strong>即可。
-                </>
-              ) : (
-                '当前成绩仅保存在当前浏览器本地。建议点击右侧【配置云端】绑定私有 Gist，实现跨设备多教师协同。'
-              )}
+              支持两大核心操作：点击<strong className="text-emerald-700 font-semibold">【同步合并】</strong>将本地所有改动（含删除）推送到云端；点击<strong className="text-sky-700 font-semibold">【拉取数据】</strong>获取全校最新档案。
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 self-end sm:self-center shrink-0">
-          <button
-            type="button"
-            onClick={handleManualRefreshCloud}
-            disabled={isRefreshingCloud || isSyncingGist}
-            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center transition cursor-pointer"
-            title="从云端获取同事录入的最新班级成绩"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingCloud || isSyncingGist ? 'animate-spin text-indigo-600' : ''}`} />
-            {isRefreshingCloud ? '正在刷新...' : '刷新云端数据'}
-          </button>
-
-          <button
-            type="button"
-            onClick={openGistConfigModal}
-            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold flex items-center transition cursor-pointer"
-          >
-            <Key className="w-3.5 h-3.5 mr-1 text-indigo-600" />
-            {isCloudConnected ? '云端协同设置' : '一键配置云端'}
-          </button>
+        <div className="shrink-0">
+          <CloudSyncButtons variant="toolbar" />
         </div>
       </div>
 
@@ -1123,12 +1099,12 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                       {isSyncingGist ? (
                         <>
                           <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
-                          正在合并并同步至云端...
+                          正在同步合并至云端...
                         </>
                       ) : isCloudConnected ? (
                         <>
                           <UploadCloud className="w-4 h-4 mr-1.5" />
-                          确认归档并同步至云端 ({willSaveTotal}人)
+                          确认归档并同步合并至云端 ({willSaveTotal}人)
                         </>
                       ) : (
                         <>

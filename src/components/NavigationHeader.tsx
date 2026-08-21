@@ -1,6 +1,7 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { ActiveTab } from '../types';
+import { CloudSyncButtons } from './CloudSyncButtons';
 import {
   FileSpreadsheet,
   Search,
@@ -114,63 +115,8 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Cloud Gist Status & Action Button */}
-            <div className="flex items-center">
-              <button
-                type="button"
-                id="btn-gist-sync-header"
-                onClick={handleOpenGistModal}
-                className={`py-1.5 px-3 rounded-l-lg border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
-                  isSyncingGist || isRefreshing
-                    ? 'bg-amber-50 text-amber-800 border-amber-300 shadow-2xs'
-                    : isGistConnected
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 rounded-r-lg'
-                }`}
-                title={
-                  isGistConnected
-                    ? `已连接私有 Gist 云端\n教师名: ${gistConfig.teacherName || '未指定'}\n点击查看协同配置与多端同步邀请`
-                    : '点击配置 GitHub Gist，开启跨电脑多老师协同'
-                }
-              >
-                {isSyncingGist || isRefreshing ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-600" />
-                ) : isGistConnected ? (
-                  <Cloud className="w-3.5 h-3.5 text-emerald-600" />
-                ) : (
-                  <Github className="w-3.5 h-3.5 text-indigo-600" />
-                )}
-                <span className="hidden sm:inline">
-                  {isSyncingGist
-                    ? '云端合并同步中...'
-                    : isRefreshing
-                    ? '刷新最新数据...'
-                    : isGistConnected
-                    ? 'Gist 云端协同'
-                    : '配置云端协同'}
-                </span>
-                <span className="inline-flex items-center">
-                  <span className={`w-2 h-2 rounded-full ${isGistConnected ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                </span>
-              </button>
-
-              {isGistConnected && (
-                <button
-                  type="button"
-                  id="btn-instant-gist-pull"
-                  onClick={handleManualRefresh}
-                  disabled={isSyncingGist || isRefreshing}
-                  className={`py-1.5 px-2.5 rounded-r-lg border border-l-0 text-xs font-semibold flex items-center justify-center transition cursor-pointer ${
-                    isRefreshing || isSyncingGist
-                      ? 'bg-amber-100 text-amber-800 border-amber-300'
-                      : 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200'
-                  }`}
-                  title="点击刷新并获取同事录入的最新班级数据"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing || isSyncingGist ? 'animate-spin' : ''}`} />
-                </button>
-              )}
-            </div>
+            {/* Direct Dual Action Buttons: 同步合并 (Push & Merge) + 拉取数据 (Pull) */}
+            <CloudSyncButtons variant="header" />
           </div>
         </div>
 
