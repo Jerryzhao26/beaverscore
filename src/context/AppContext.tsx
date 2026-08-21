@@ -149,6 +149,8 @@ interface AppContextType {
   addTeacher: (teacher: string) => void;
   deleteTeacher: (teacher: string) => void;
   addWeakPointTag: (category: string, tag: string) => void;
+  deleteWeakPointTag: (category: string, tag: string) => void;
+  deleteWeakPointCategory: (category: string) => void;
 
   // Data & Reset
   clearStudentsAndClasses: () => void;
@@ -165,6 +167,8 @@ const STORAGE_KEYS = {
   UNITS: 'training_scores_units_v2',
   TEACHERS: 'training_scores_teachers_v2',
   TAGS: 'training_scores_tags_v2',
+  DELETED_ENTITIES: 'training_scores_deleted_entities_v2',
+  DICT_ADDED: 'training_scores_dict_added_v2',
 };
 
 const normalizeTimestamp = (val: any): number => {
@@ -283,6 +287,52 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   });
 
+  const [deletedEntities, setDeletedEntities] = useState<{
+    levels: Record<string, number>;
+    units: Record<string, number>;
+    teachers: Record<string, number>;
+    tags: Record<string, number>;
+    weakPointCategories: Record<string, number>;
+  }>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.DELETED_ENTITIES);
+      const parsed = saved ? JSON.parse(saved) : null;
+      return parsed && typeof parsed === 'object'
+        ? {
+            levels: parsed.levels || {},
+            units: parsed.units || {},
+            teachers: parsed.teachers || {},
+            tags: parsed.tags || {},
+            weakPointCategories: parsed.weakPointCategories || {},
+          }
+        : { levels: {}, units: {}, teachers: {}, tags: {}, weakPointCategories: {} };
+    } catch {
+      return { levels: {}, units: {}, teachers: {}, tags: {}, weakPointCategories: {} };
+    }
+  });
+
+  const [dictionaryAddedAt, setDictionaryAddedAt] = useState<{
+    levels: Record<string, number>;
+    units: Record<string, number>;
+    teachers: Record<string, number>;
+    tags: Record<string, number>;
+  }>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.DICT_ADDED);
+      const parsed = saved ? JSON.parse(saved) : null;
+      return parsed && typeof parsed === 'object'
+        ? {
+            levels: parsed.levels || {},
+            units: parsed.units || {},
+            teachers: parsed.teachers || {},
+            tags: parsed.tags || {},
+          }
+        : { levels: {}, units: {}, teachers: {}, tags: {} };
+    } catch {
+      return { levels: {}, units: {}, teachers: {}, tags: {} };
+    }
+  });
+
   // GitHub Gist Cloud Sync State
   const [gistConfig, setGistConfig] = useState<GistConfig>(() => getStoredGistConfig());
   const [isSyncingGist, setIsSyncingGist] = useState<boolean>(false);
@@ -357,6 +407,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       units,
       teachers,
       weakPointCategories,
+      deletedEntities,
+      dictionaryAddedAt,
     };
   };
 
@@ -383,6 +435,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     if (Array.isArray(data.weakPointCategories)) {
       setWeakPointCategories(data.weakPointCategories);
+    }
+    if (data.deletedEntities && typeof data.deletedEntities === 'object') {
+      setDeletedEntities(prev => ({
+        levels: { ...prev.levels, ...(data.deletedEntities.levels || {}) },
+        units: { ...prev.units, ...(data.deletedEntities.units || {}) },
+        teachers: { ...prev.teachers, ...(data.deletedEntities.teachers || {}) },
+        tags: { ...prev.tags, ...(data.deletedEntities.tags || {}) },
+        weakPointCategories: { ...prev.weakPointCategories, ...(data.deletedEntities.weakPointCategories || {}) },
+      }));
+    }
+    if (data.dictionaryAddedAt && typeof data.dictionaryAddedAt === 'object') {
+      setDictionaryAddedAt(prev => ({
+        levels: { ...prev.levels, ...(data.dictionaryAddedAt.levels || {}) },
+        units: { ...prev.units, ...(data.dictionaryAddedAt.units || {}) },
+        teachers: { ...prev.teachers, ...(data.dictionaryAddedAt.teachers || {}) },
+        tags: { ...prev.tags, ...(data.dictionaryAddedAt.tags || {}) },
+      }));
     }
   };
 
@@ -903,6 +972,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(weakPointCategories));
   }, [weakPointCategories]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.DELETED_ENTITIES, JSON.stringify(deletedEntities));
+  }, [deletedEntities]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.DICT_ADDED, JSON.stringify(dictionaryAddedAt));
+  }, [dictionaryAddedAt]);
 
   // 1. Score Operations with updatedAt & soft-delete
   const addScoreBatch = (records: Omit<ScoreRecord, 'id' | 'recordedAt'>[]) => {
@@ -2121,52 +2198,145 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addLevel = (level: string) => {
     const trimmed = level.trim();
-    if (trimmed && !levels.includes(trimmed)) {
-      setLevels(prev => [...prev, trimmed]);
-    }
+    if (!trimmed) return;
+    const now = Date.now();
+    setLevels(prev => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+    setDictionaryAddedAt(prev => ({
+      ...prev,
+      levels: { ...(prev.levels || {}), [trimmed]: now }
+    }));
+    setDeletedEntities(prev => {
+      const next = { ...prev, levels: { ...(prev.levels || {}) } };
+      delete next.levels[trimmed];
+      return next;
+    });
   };
 
   const deleteLevel = (level: string) => {
-    setLevels(prev => prev.filter(l => l !== level));
+    const trimmed = level.trim();
+    if (!trimmed) return;
+    const now = Date.now();
+    setLevels(prev => prev.filter(l => l !== trimmed));
+    setDeletedEntities(prev => ({
+      ...prev,
+      levels: { ...(prev.levels || {}), [trimmed]: now }
+    }));
   };
 
   const addUnit = (unit: string) => {
     const trimmed = unit.trim();
-    if (trimmed && !units.includes(trimmed)) {
-      setUnits(prev => [...prev, trimmed]);
-    }
+    if (!trimmed) return;
+    const now = Date.now();
+    setUnits(prev => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+    setDictionaryAddedAt(prev => ({
+      ...prev,
+      units: { ...(prev.units || {}), [trimmed]: now }
+    }));
+    setDeletedEntities(prev => {
+      const next = { ...prev, units: { ...(prev.units || {}) } };
+      delete next.units[trimmed];
+      return next;
+    });
   };
 
   const deleteUnit = (unit: string) => {
-    setUnits(prev => prev.filter(u => u !== unit));
+    const trimmed = unit.trim();
+    if (!trimmed) return;
+    const now = Date.now();
+    setUnits(prev => prev.filter(u => u !== trimmed));
+    setDeletedEntities(prev => ({
+      ...prev,
+      units: { ...(prev.units || {}), [trimmed]: now }
+    }));
   };
 
   const addTeacher = (teacher: string) => {
     const trimmed = teacher.trim();
-    if (trimmed && !teachers.includes(trimmed)) {
-      setTeachers(prev => [...prev, trimmed]);
-    }
+    if (!trimmed) return;
+    const now = Date.now();
+    setTeachers(prev => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+    setDictionaryAddedAt(prev => ({
+      ...prev,
+      teachers: { ...(prev.teachers || {}), [trimmed]: now }
+    }));
+    setDeletedEntities(prev => {
+      const next = { ...prev, teachers: { ...(prev.teachers || {}) } };
+      delete next.teachers[trimmed];
+      return next;
+    });
   };
 
   const deleteTeacher = (teacher: string) => {
-    setTeachers(prev => prev.filter(t => t !== teacher));
+    const trimmed = teacher.trim();
+    if (!trimmed) return;
+    const now = Date.now();
+    setTeachers(prev => prev.filter(t => t !== trimmed));
+    setDeletedEntities(prev => ({
+      ...prev,
+      teachers: { ...(prev.teachers || {}), [trimmed]: now }
+    }));
   };
 
   const addWeakPointTag = (category: string, tag: string) => {
     const trimmedTag = tag.trim();
-    if (!trimmedTag) return;
+    const trimmedCat = category.trim();
+    if (!trimmedTag || !trimmedCat) return;
+    const now = Date.now();
     setWeakPointCategories(prev => {
-      const catExists = prev.some(c => c.category === category);
+      const catExists = prev.some(c => c.category === trimmedCat);
       if (catExists) {
         return prev.map(c =>
-          c.category === category
+          c.category === trimmedCat
             ? { ...c, tags: c.tags.includes(trimmedTag) ? c.tags : [...c.tags, trimmedTag] }
             : c
         );
       } else {
-        return [...prev, { category, tags: [trimmedTag] }];
+        return [...prev, { category: trimmedCat, tags: [trimmedTag] }];
       }
     });
+    const tagKey = `${trimmedCat}:::${trimmedTag}`;
+    setDictionaryAddedAt(prev => ({
+      ...prev,
+      tags: { ...(prev.tags || {}), [tagKey]: now }
+    }));
+    setDeletedEntities(prev => {
+      const next = {
+        ...prev,
+        tags: { ...(prev.tags || {}) },
+        weakPointCategories: { ...(prev.weakPointCategories || {}) }
+      };
+      delete next.tags[tagKey];
+      delete next.weakPointCategories[trimmedCat];
+      return next;
+    });
+  };
+
+  const deleteWeakPointTag = (category: string, tag: string) => {
+    const trimmedTag = tag.trim();
+    const trimmedCat = category.trim();
+    if (!trimmedTag || !trimmedCat) return;
+    const now = Date.now();
+    setWeakPointCategories(prev =>
+      prev.map(c =>
+        c.category === trimmedCat ? { ...c, tags: c.tags.filter(t => t !== trimmedTag) } : c
+      )
+    );
+    const tagKey = `${trimmedCat}:::${trimmedTag}`;
+    setDeletedEntities(prev => ({
+      ...prev,
+      tags: { ...(prev.tags || {}), [tagKey]: now }
+    }));
+  };
+
+  const deleteWeakPointCategory = (category: string) => {
+    const trimmedCat = category.trim();
+    if (!trimmedCat) return;
+    const now = Date.now();
+    setWeakPointCategories(prev => prev.filter(c => c.category !== trimmedCat));
+    setDeletedEntities(prev => ({
+      ...prev,
+      weakPointCategories: { ...(prev.weakPointCategories || {}), [trimmedCat]: now }
+    }));
   };
 
   const clearStudentsAndClasses = () => {
@@ -2185,6 +2355,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setUnits(DEFAULT_UNITS);
     setTeachers(DEFAULT_TEACHERS);
     setWeakPointCategories(DEFAULT_WEAK_POINT_CATEGORIES);
+    setDeletedEntities({ levels: {}, units: {}, teachers: {}, tags: {}, weakPointCategories: {} });
+    setDictionaryAddedAt({ levels: {}, units: {}, teachers: {}, tags: {} });
   };
 
   const exportDataToJson = () => {
@@ -2286,6 +2458,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addTeacher,
         deleteTeacher,
         addWeakPointTag,
+        deleteWeakPointTag,
+        deleteWeakPointCategory,
         clearStudentsAndClasses,
         resetToDemoData,
         exportDataToJson,

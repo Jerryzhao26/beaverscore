@@ -517,23 +517,91 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
     }
   }
 
-  // 4. 合并字典与标签
-  const mergedLevels = Array.from(new Set([...(localData?.levels || []), ...(remoteData?.levels || [])].filter(Boolean)));
-  const mergedUnits = Array.from(new Set([...(localData?.units || []), ...(remoteData?.units || [])].filter(Boolean)));
-  const mergedTeachers = Array.from(new Set([...(localData?.teachers || []), ...(remoteData?.teachers || [])].filter(Boolean)));
+  // 4. 合并字典与标签（支持软删除与新增时间戳，防止已删除项在同步时死灰复燃）
+  const localDeleted = localData?.deletedEntities || {};
+  const remoteDeleted = remoteData?.deletedEntities || {};
+  const localAdded = localData?.dictionaryAddedAt || {};
+  const remoteAdded = remoteData?.dictionaryAddedAt || {};
+
+  // 合并删除字典记录
+  const mergedDeletedEntities = {
+    levels: { ...(localDeleted.levels || {}), ...(remoteDeleted.levels || {}) },
+    units: { ...(localDeleted.units || {}), ...(remoteDeleted.units || {}) },
+    teachers: { ...(localDeleted.teachers || {}), ...(remoteDeleted.teachers || {}) },
+    tags: { ...(localDeleted.tags || {}), ...(remoteDeleted.tags || {}) },
+    weakPointCategories: { ...(localDeleted.weakPointCategories || {}), ...(remoteDeleted.weakPointCategories || {}) },
+  };
+
+  // 合并新增字典记录
+  const mergedDictionaryAddedAt = {
+    levels: { ...(localAdded.levels || {}), ...(remoteAdded.levels || {}) },
+    units: { ...(localAdded.units || {}), ...(remoteAdded.units || {}) },
+    teachers: { ...(localAdded.teachers || {}), ...(remoteAdded.teachers || {}) },
+    tags: { ...(localAdded.tags || {}), ...(remoteAdded.tags || {}) },
+  };
+
+  const mergeDictionaryList = (
+    localList: string[] = [],
+    remoteList: string[] = [],
+    deletedMap: Record<string, number> = {},
+    addedMap: Record<string, number> = {}
+  ): string[] => {
+    const candidates = Array.from(new Set([...(localList || []), ...(remoteList || [])].filter(Boolean)));
+    return candidates.filter(item => {
+      const deletedAt = deletedMap[item] || 0;
+      const addedAt = addedMap[item] || 0;
+      if (deletedAt > 0) {
+        // 如果有删除标记，仅当在删除之后又明确被重新添加时才保留
+        return addedAt > deletedAt;
+      }
+      return true;
+    });
+  };
+
+  const mergedLevels = mergeDictionaryList(
+    localData?.levels || [],
+    remoteData?.levels || [],
+    mergedDeletedEntities.levels,
+    mergedDictionaryAddedAt.levels
+  );
+
+  const mergedUnits = mergeDictionaryList(
+    localData?.units || [],
+    remoteData?.units || [],
+    mergedDeletedEntities.units,
+    mergedDictionaryAddedAt.units
+  );
+
+  const mergedTeachers = mergeDictionaryList(
+    localData?.teachers || [],
+    remoteData?.teachers || [],
+    mergedDeletedEntities.teachers,
+    mergedDictionaryAddedAt.teachers
+  );
 
   const localCats: WeakPointTagCategory[] = Array.isArray(localData?.weakPointCategories) ? localData.weakPointCategories : [];
   const remoteCats: WeakPointTagCategory[] = Array.isArray(remoteData?.weakPointCategories) ? remoteData.weakPointCategories : [];
   const catMap = new Map<string, string[]>();
+
   for (const c of localCats) {
-    if (c && c.category) catMap.set(c.category, Array.isArray(c.tags) ? [...c.tags] : []);
-  }
-  for (const rC of remoteCats) {
-    if (rC && rC.category) {
-      const existing = catMap.get(rC.category) || [];
-      catMap.set(rC.category, Array.from(new Set([...existing, ...(Array.isArray(rC.tags) ? rC.tags : [])])));
+    if (c && c.category && !mergedDeletedEntities.weakPointCategories[c.category]) {
+      const validTags = (Array.isArray(c.tags) ? c.tags : []).filter(
+        t => !mergedDeletedEntities.tags[`${c.category}:::${t}`]
+      );
+      catMap.set(c.category, validTags);
     }
   }
+
+  for (const rC of remoteCats) {
+    if (rC && rC.category && !mergedDeletedEntities.weakPointCategories[rC.category]) {
+      const existing = catMap.get(rC.category) || [];
+      const remoteValidTags = (Array.isArray(rC.tags) ? rC.tags : []).filter(
+        t => !mergedDeletedEntities.tags[`${rC.category}:::${t}`]
+      );
+      catMap.set(rC.category, Array.from(new Set([...existing, ...remoteValidTags])));
+    }
+  }
+
   const mergedWeakPointCategories: WeakPointTagCategory[] = Array.from(catMap.entries()).map(([category, tags]) => ({
     category,
     tags
@@ -600,6 +668,8 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
     units: mergedUnits,
     teachers: mergedTeachers,
     weakPointCategories: mergedWeakPointCategories,
+    deletedEntities: mergedDeletedEntities,
+    dictionaryAddedAt: mergedDictionaryAddedAt,
   };
 
   return {

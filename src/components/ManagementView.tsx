@@ -72,6 +72,8 @@ export const ManagementView: React.FC = () => {
     addTeacher,
     deleteTeacher,
     addWeakPointTag,
+    deleteWeakPointTag,
+    deleteWeakPointCategory,
     exportDataToJson,
     importDataFromJson,
     resetToDemoData,
@@ -656,9 +658,9 @@ export const ManagementView: React.FC = () => {
 
       {/* 1. Students Tab */}
       {activeSubTab === 'students' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Form: Add/Edit Student */}
-          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs h-fit">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          {/* Left Form: Add/Edit Student (Floating / Sticky) */}
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs h-fit lg:sticky lg:top-20 z-10 max-h-[calc(100vh-6rem)] overflow-y-auto">
             <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-3 flex items-center justify-between">
               <span>{isEditingStudent ? '📝 编辑学员档案与在读级别' : '➕ 注册新学员'}</span>
               {isEditingStudent && (
@@ -1118,9 +1120,9 @@ export const ManagementView: React.FC = () => {
 
       {/* 2. Classes Tab */}
       {activeSubTab === 'classes' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Form: Add/Edit Class */}
-          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs h-fit">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          {/* Left Form: Add/Edit Class (Floating / Sticky) */}
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs h-fit lg:sticky lg:top-20 z-10 max-h-[calc(100vh-6rem)] overflow-y-auto">
             <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-3 flex items-center justify-between">
               <span>{isEditingClass ? '📝 编辑班级与主授级别' : '➕ 开设新教学班'}</span>
               {isEditingClass && (
@@ -1529,17 +1531,37 @@ export const ManagementView: React.FC = () => {
 
             <div className="space-y-2 pt-2">
               {weakPointCategories.map(cat => (
-                <div key={cat.category} className="p-2 bg-slate-50 rounded-lg">
-                  <div className="text-[11px] font-bold text-slate-600 mb-1">
-                    {cat.category}:
+                <div key={cat.category} className="p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 mb-1.5">
+                    <span>{cat.category}:</span>
+                    <button
+                      onClick={() => {
+                        deleteWeakPointCategory(cat.category);
+                        showToast(`已删除分类【${cat.category}】`);
+                      }}
+                      className="text-slate-400 hover:text-rose-600 text-[10px] cursor-pointer"
+                      title="删除该分类"
+                    >
+                      删除分类
+                    </button>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {cat.tags.map(t => (
                       <span
                         key={t}
-                        className="px-2 py-0.5 bg-white border border-slate-200 text-slate-700 rounded text-[11px]"
+                        className="inline-flex items-center px-2 py-0.5 bg-white border border-slate-200 text-slate-700 rounded text-[11px] hover:border-slate-300 transition"
                       >
-                        {t}
+                        <span>{t}</span>
+                        <button
+                          onClick={() => {
+                            deleteWeakPointTag(cat.category, t);
+                            showToast(`已移除标签【${t}】`);
+                          }}
+                          className="ml-1 text-slate-400 hover:text-rose-600 cursor-pointer font-bold"
+                          title="删除该标签"
+                        >
+                          ×
+                        </button>
                       </span>
                     ))}
                   </div>
