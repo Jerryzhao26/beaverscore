@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
-import { Student, ClassGroup, ScoreRecord, WeakPointTagCategory, SyncLogEntry, DeletedEntities, SyncNotificationData } from '../types';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
+import { Student, ClassGroup, ScoreRecord, WeakPointTagCategory, SyncLogEntry, SyncNotificationData } from '../types';
 import {
   INITIAL_CLASSES,
   INITIAL_STUDENTS,
@@ -20,6 +20,7 @@ import {
   pullDataFromGist,
   pushDataToGistWithSmartMerge,
   mergeDatasets,
+  mergeData,
   parseGistUrlParams,
   generateGistShareUrl,
   DEFAULT_GIST_FILENAME,
@@ -164,131 +165,83 @@ const STORAGE_KEYS = {
   UNITS: 'training_scores_units_v2',
   TEACHERS: 'training_scores_teachers_v2',
   TAGS: 'training_scores_tags_v2',
-  DELETED_ENTITIES: 'training_scores_deleted_entities_v2',
 };
 
-const safeTime = (val: any): number => {
-  if (!val) return 0;
+const normalizeTimestamp = (val: any): number => {
+  if (typeof val === 'number' && !isNaN(val)) return val;
+  if (!val) return Date.now();
   const t = new Date(val).getTime();
-  return isNaN(t) ? 0 : t;
+  return isNaN(t) ? Date.now() : t;
 };
 
-const getScoreRecordTime = (r: ScoreRecord): number => {
-  return Math.max(
-    safeTime(r.updatedAt),
-    safeTime(r.recordedAt),
-    safeTime(r.examDate)
-  );
-};
+const normalizeScore = (s: any): ScoreRecord => ({
+  ...s,
+  id: s.id || `scr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+  updatedAt: normalizeTimestamp(s.updatedAt || s.recordedAt),
+  isDeleted: Boolean(s.isDeleted),
+  weakPoints: Array.isArray(s.weakPoints) ? s.weakPoints : []
+});
 
-const getScoreSignature = (r: Partial<ScoreRecord>): string => {
-  const std = (r.studentId || r.studentName || '').trim();
-  const date = (r.examDate || '').trim();
-  const lvl = (r.level || '').trim();
-  const unit = (r.unit || '').trim();
-  const title = (r.examTitle || '').trim();
-  return `sig_${std}_${date}_${lvl}_${unit}_${title}`;
+const normalizeStudent = (s: any): Student => ({
+  ...s,
+  id: s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+  updatedAt: normalizeTimestamp(s.updatedAt),
+  isDeleted: Boolean(s.isDeleted),
+  status: s.status || 'active'
+});
+
+const normalizeClass = (c: any): ClassGroup => {
+  const lvl = c.currentLevel || c.level || 'BF1';
+  return {
+    ...c,
+    id: c.id || `cls_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    level: lvl,
+    currentLevel: lvl,
+    updatedAt: normalizeTimestamp(c.updatedAt),
+    isDeleted: Boolean(c.isDeleted),
+  };
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [deletedEntities, setDeletedEntities] = useState<DeletedEntities>(() => {
+  const [rawClasses, setRawClasses] = useState<ClassGroup[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.DELETED_ENTITIES);
-      const parsed = saved ? JSON.parse(saved) : null;
-      if (parsed && typeof parsed === 'object') {
-        return {
-          classes: parsed.classes || {},
-          students: parsed.students || {},
-          scoreRecords: parsed.scoreRecords || {},
-          levels: parsed.levels || {},
-          units: parsed.units || {},
-          teachers: parsed.teachers || {},
-        };
-      }
-      return { classes: {}, students: {}, scoreRecords: {}, levels: {}, units: {}, teachers: {} };
-    } catch {
-      return { classes: {}, students: {}, scoreRecords: {}, levels: {}, units: {}, teachers: {} };
-    }
-  });
-
-  const [classes, setClasses] = useState<ClassGroup[]>(() => {
-    try {
-      const savedTomb = localStorage.getItem(STORAGE_KEYS.DELETED_ENTITIES);
-      const parsedTomb = savedTomb ? JSON.parse(savedTomb) : null;
-      const delClasses = parsedTomb?.classes || {};
-
       const saved = localStorage.getItem(STORAGE_KEYS.CLASSES);
       const parsed = saved ? JSON.parse(saved) : null;
       const list: ClassGroup[] = Array.isArray(parsed) ? parsed : INITIAL_CLASSES;
-      return list.filter((c: ClassGroup) => {
-        const delTime = delClasses[c.id] || (c.name ? delClasses[c.name] : undefined);
-        if (!delTime) return true;
-        const cTime = safeTime(c.updatedAt);
-        return cTime > delTime;
-      });
+      return list.map(normalizeClass);
     } catch {
-      return INITIAL_CLASSES;
+      return INITIAL_CLASSES.map(normalizeClass);
     }
   });
 
-  const [students, setStudents] = useState<Student[]>(() => {
+  const [rawStudents, setRawStudents] = useState<Student[]>(() => {
     try {
-      const savedTomb = localStorage.getItem(STORAGE_KEYS.DELETED_ENTITIES);
-      const parsedTomb = savedTomb ? JSON.parse(savedTomb) : null;
-      const delStudents = parsedTomb?.students || {};
-
       const saved = localStorage.getItem(STORAGE_KEYS.STUDENTS);
       const parsed = saved ? JSON.parse(saved) : null;
       const list: Student[] = Array.isArray(parsed) ? parsed : INITIAL_STUDENTS;
-      return list.filter((s: Student) => {
-        const delTime = delStudents[s.id] || (s.name ? delStudents[s.name] : undefined);
-        if (!delTime) return true;
-        const sTime = safeTime(s.updatedAt);
-        return sTime > delTime;
-      });
+      return list.map(normalizeStudent);
     } catch {
-      return INITIAL_STUDENTS;
+      return INITIAL_STUDENTS.map(normalizeStudent);
     }
   });
 
-  const [scoreRecords, setScoreRecords] = useState<ScoreRecord[]>(() => {
+  const [rawScoreRecords, setRawScoreRecords] = useState<ScoreRecord[]>(() => {
     try {
-      const savedTomb = localStorage.getItem(STORAGE_KEYS.DELETED_ENTITIES);
-      const parsedTomb = savedTomb ? JSON.parse(savedTomb) : null;
-      const delScores = parsedTomb?.scoreRecords || {};
-      const delStudents = parsedTomb?.students || {};
-
       const saved = localStorage.getItem(STORAGE_KEYS.RECORDS);
       const parsed = saved ? JSON.parse(saved) : null;
       const list: ScoreRecord[] = Array.isArray(parsed) ? parsed : INITIAL_SCORE_RECORDS;
-      return list
-        .filter((r: ScoreRecord) => {
-          const sig = getScoreSignature(r);
-          const delTime = (r.id ? delScores[r.id] : undefined) || delScores[sig];
-          const rTime = getScoreRecordTime(r);
-
-          if (delTime && rTime <= delTime) {
-            return false;
-          }
-
-          if (r.studentId && delStudents[r.studentId]) {
-            if (rTime <= delStudents[r.studentId]) {
-              return false;
-            }
-          }
-
-          return true;
-        })
-        .map((r: any) => ({
-          ...r,
-          weakPoints: Array.isArray(r.weakPoints) ? r.weakPoints : []
-        }));
+      return list.map(normalizeScore);
     } catch {
-      return INITIAL_SCORE_RECORDS;
+      return INITIAL_SCORE_RECORDS.map(normalizeScore);
     }
   });
+
+  // UI-Facing filtered state (filtering out soft-deleted items)
+  const classes = useMemo(() => rawClasses.filter(c => !c.isDeleted), [rawClasses]);
+  const students = useMemo(() => rawStudents.filter(s => !s.isDeleted), [rawStudents]);
+  const scoreRecords = useMemo(() => rawScoreRecords.filter(r => !r.isDeleted), [rawScoreRecords]);
 
   const [levels, setLevels] = useState<string[]>(() => {
     try {
@@ -397,88 +350,40 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return {
       version: '2.0',
       exportedAt: new Date().toISOString(),
-      classes,
-      students,
-      scoreRecords,
+      classes: rawClasses,
+      students: rawStudents,
+      scoreRecords: rawScoreRecords,
       levels,
       units,
       teachers,
       weakPointCategories,
-      deletedEntities,
     };
   };
 
   const applyMergedData = (data: any) => {
     if (!data) return;
-    let activeDel: DeletedEntities = deletedEntities;
-    if (data.deletedEntities) {
-      activeDel = {
-        classes: { ...(deletedEntities.classes || {}), ...(data.deletedEntities.classes || {}) },
-        students: { ...(deletedEntities.students || {}), ...(data.deletedEntities.students || {}) },
-        scoreRecords: { ...(deletedEntities.scoreRecords || {}), ...(data.deletedEntities.scoreRecords || {}) },
-        levels: { ...(deletedEntities.levels || {}), ...(data.deletedEntities.levels || {}) },
-        units: { ...(deletedEntities.units || {}), ...(data.deletedEntities.units || {}) },
-        teachers: { ...(deletedEntities.teachers || {}), ...(data.deletedEntities.teachers || {}) },
-      };
-      setDeletedEntities(activeDel);
-    }
 
     if (Array.isArray(data.classes)) {
-      const filtered = data.classes.filter((c: ClassGroup) => {
-        const delTime = activeDel.classes[c.id] || (c.name ? activeDel.classes[c.name] : undefined);
-        if (!delTime) return true;
-        const cTime = safeTime(c.updatedAt);
-        return cTime > delTime;
-      });
-      setClasses(filtered);
+      setRawClasses(data.classes.map(normalizeClass));
     }
     if (Array.isArray(data.students)) {
-      const filtered = data.students.filter((s: Student) => {
-        const delTime = activeDel.students[s.id] || (s.name ? activeDel.students[s.name] : undefined);
-        if (!delTime) return true;
-        const sTime = safeTime(s.updatedAt);
-        return sTime > delTime;
-      });
-      setStudents(filtered);
+      setRawStudents(data.students.map(normalizeStudent));
     }
     if (Array.isArray(data.scoreRecords)) {
-      const filtered = data.scoreRecords
-        .filter((r: ScoreRecord) => {
-          const sig = getScoreSignature(r);
-          const delTime = (r.id ? activeDel.scoreRecords[r.id] : undefined) || activeDel.scoreRecords[sig];
-          const rTime = getScoreRecordTime(r);
-
-          if (delTime && rTime <= delTime) {
-            return false;
-          }
-
-          if (r.studentId && activeDel.students[r.studentId]) {
-            if (rTime <= activeDel.students[r.studentId]) {
-              return false;
-            }
-          }
-
-          return true;
-        })
-        .map((r: any) => ({
-          ...r,
-          weakPoints: Array.isArray(r.weakPoints) ? r.weakPoints : []
-        }));
-      setScoreRecords(filtered);
+      setRawScoreRecords(data.scoreRecords.map(normalizeScore));
     }
     if (Array.isArray(data.levels)) {
-      const delMap = activeDel.levels || {};
-      setLevels(data.levels.filter((l: string) => !delMap[l]));
+      setLevels(Array.from(new Set(data.levels.filter(Boolean))));
     }
     if (Array.isArray(data.units)) {
-      const delMap = activeDel.units || {};
-      setUnits(data.units.filter((u: string) => !delMap[u]));
+      setUnits(Array.from(new Set(data.units.filter(Boolean))));
     }
     if (Array.isArray(data.teachers)) {
-      const delMap = activeDel.teachers || {};
-      setTeachers(data.teachers.filter((t: string) => !delMap[t]));
+      setTeachers(Array.from(new Set(data.teachers.filter(Boolean))));
     }
-    if (Array.isArray(data.weakPointCategories)) setWeakPointCategories(data.weakPointCategories);
+    if (Array.isArray(data.weakPointCategories)) {
+      setWeakPointCategories(data.weakPointCategories);
+    }
   };
 
   const pushToGist = async (
@@ -514,7 +419,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           message: '全校数据智能合并并同步上传至 Gist',
           operatorTeacher: gistConfig.teacherName || '任课教师',
           incomingCount: res.report?.incomingScoresCount || 0,
-          totalRecordsCount: res.data?.scoreRecords?.length || scoreRecords.length
+          totalRecordsCount: res.report?.totalScoresCount || scoreRecords.length
         });
 
         const incoming = res.report?.incomingScoresCount || 0;
@@ -534,9 +439,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           outgoingScoresCount: outgoing,
           incomingStudentsCount: res.report?.incomingStudentsCount,
           incomingClassesCount: res.report?.incomingClassesCount,
-          totalScoresCount: res.report?.totalScoresCount || res.data?.scoreRecords?.length || scoreRecords.length,
-          totalStudentsCount: res.report?.totalStudentsCount || res.data?.students?.length || students.length,
-          totalClassesCount: res.report?.totalClassesCount || res.data?.classes?.length || classes.length,
+          totalScoresCount: res.report?.totalScoresCount || scoreRecords.length,
+          totalStudentsCount: res.report?.totalStudentsCount || students.length,
+          totalClassesCount: res.report?.totalClassesCount || classes.length,
           incomingStudentNames: res.report?.incomingStudentNames,
           incomingClassNames: res.report?.incomingClassNames,
           incomingScoreSamples: res.report?.incomingScoreSamples,
@@ -642,7 +547,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             message: `成功拉取云端数据，融合了 ${report.incomingScoresCount} 条新成绩与 ${report.incomingStudentsCount} 位新学员`,
             operatorTeacher: gistConfig.teacherName || '任课教师',
             incomingCount: report.incomingScoresCount,
-            totalRecordsCount: merged.scoreRecords?.length || scoreRecords.length
+            totalRecordsCount: report.totalScoresCount || scoreRecords.length
           });
 
           const hasChanges = (report.incomingScoresCount && report.incomingScoresCount > 0) ||
@@ -656,16 +561,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             title: hasChanges ? '云端拉取完成 · 已融合最新学情' : '云端拉取完成 · 数据为最新状态',
             message: hasChanges
               ? `成功从云端 Gist 拉取并融合了 ${report.incomingScoresCount} 条新成绩、${report.incomingStudentsCount} 位新学员及 ${report.incomingClassesCount} 个新班级。`
-              : `本地学情数据与云端 Gist 完全一致（全校共 ${merged.students?.length || 0} 位学员，${merged.scoreRecords?.length || 0} 条有效测评记录），无新增变动。`,
+              : `本地学情数据与云端 Gist 完全一致（全校共 ${report.totalStudentsCount || students.length} 位学员，${report.totalScoresCount || scoreRecords.length} 条有效测评记录），无新增变动。`,
             timestamp: new Date().toLocaleTimeString('zh-CN'),
             teacherName: gistConfig.teacherName,
             gistId: gistIdToUse,
             incomingScoresCount: report.incomingScoresCount,
             incomingStudentsCount: report.incomingStudentsCount,
             incomingClassesCount: report.incomingClassesCount,
-            totalScoresCount: report.totalScoresCount || merged.scoreRecords?.length,
-            totalStudentsCount: report.totalStudentsCount || merged.students?.length,
-            totalClassesCount: report.totalClassesCount || merged.classes?.length,
+            totalScoresCount: report.totalScoresCount || scoreRecords.length,
+            totalStudentsCount: report.totalStudentsCount || students.length,
+            totalClassesCount: report.totalClassesCount || classes.length,
             incomingStudentNames: report.incomingStudentNames,
             incomingClassNames: report.incomingClassNames,
             incomingScoreSamples: report.incomingScoreSamples,
@@ -709,8 +614,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   /**
-   * Pure Pull: Purely downloads cloud Gist data and overwrites local view as single source of truth,
-   * without uploading or retaining unpersisted local differences.
+   * Pure Pull: Downloads cloud Gist data and applies it
    */
   const purePullFromGist = async (
     customToken?: string,
@@ -740,20 +644,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           lastSyncedAt: nowIso,
         });
 
-        const studentsCount = res.data.students?.length || 0;
-        const scoresCount = res.data.scoreRecords?.length || 0;
-        const classesCount = res.data.classes?.length || 0;
+        const activeStudents = Array.isArray(res.data.students) ? res.data.students.filter((s: any) => !s.isDeleted).length : 0;
+        const activeScores = Array.isArray(res.data.scoreRecords) ? res.data.scoreRecords.filter((s: any) => !s.isDeleted).length : 0;
+        const activeClasses = Array.isArray(res.data.classes) ? res.data.classes.filter((s: any) => !s.isDeleted).length : 0;
 
-        const successMsg = `✅ 纯粹拉取成功！已用云端权威数据完全同步本地（共 ${studentsCount} 位学员，${scoresCount} 条测评记录，${classesCount} 个班级）`;
+        const successMsg = `✅ 纯粹拉取成功！已用云端权威数据完全同步本地（共 ${activeStudents} 位学员，${activeScores} 条测评记录，${activeClasses} 个班级）`;
         setGistLastMessage(successMsg);
 
         addSyncLog({
           type: 'pull',
           success: true,
-          message: `执行纯拉取操作：完全以云端数据覆盖本地，共 ${scoresCount} 条成绩、${studentsCount} 位学员`,
+          message: `执行纯拉取操作：完全以云端数据同步本地，共 ${activeScores} 条成绩、${activeStudents} 位学员`,
           operatorTeacher: gistConfig.teacherName || '任课教师',
-          incomingCount: scoresCount,
-          totalRecordsCount: scoresCount,
+          incomingCount: activeScores,
+          totalRecordsCount: activeScores,
         });
 
         showSyncNotification({
@@ -761,13 +665,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           type: 'success',
           action: 'pull',
           title: '📥 纯粹拉取完成 · 本地已与云端完全一致',
-          message: `已从云端 Gist 下载最新完整档案并直接更新本地。全校共 ${studentsCount} 位学员、${scoresCount} 条成绩记录、${classesCount} 个班级。本地已废弃或多余数据均已清理。`,
+          message: `已从云端 Gist 下载最新完整档案并直接更新本地。全校共 ${activeStudents} 位学员、${activeScores} 条成绩记录、${activeClasses} 个班级。`,
           timestamp: new Date().toLocaleTimeString('zh-CN'),
           teacherName: gistConfig.teacherName,
           gistId: gistIdToUse,
-          totalScoresCount: scoresCount,
-          totalStudentsCount: studentsCount,
-          totalClassesCount: classesCount,
+          totalScoresCount: activeScores,
+          totalStudentsCount: activeStudents,
+          totalClassesCount: activeClasses,
         });
 
         return { success: true, message: successMsg, data: res.data };
@@ -873,18 +777,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     autoSaveTimerRef.current = setTimeout(async () => {
       if (isPullingRef.current) return;
 
-      const fullData = {
-        version: '2.0',
-        exportedAt: new Date().toISOString(),
-        classes,
-        students,
-        scoreRecords,
-        levels,
-        units,
-        teachers,
-        weakPointCategories,
-        deletedEntities,
-      };
+      const fullData = getFullDatabaseObject();
 
       const res = await pushDataToGistWithSmartMerge(
         gistConfig.token,
@@ -917,14 +810,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     };
   }, [
-    classes,
-    students,
-    scoreRecords,
+    rawClasses,
+    rawStudents,
+    rawScoreRecords,
     levels,
     units,
     teachers,
     weakPointCategories,
-    deletedEntities,
     gistConfig.autoSync,
     gistConfig.token,
     gistConfig.gistId
@@ -975,27 +867,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     gistConfig.gistId,
     gistConfig.token,
     gistConfig.autoPullOnLoad,
-    classes,
-    students,
-    scoreRecords,
+    rawClasses,
+    rawStudents,
+    rawScoreRecords,
     levels,
     units,
     teachers,
-    weakPointCategories,
-    deletedEntities
+    weakPointCategories
   ]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(classes));
-  }, [classes]);
+    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(rawClasses));
+  }, [rawClasses]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
-  }, [students]);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(rawStudents));
+  }, [rawStudents]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(scoreRecords));
-  }, [scoreRecords]);
+    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(rawScoreRecords));
+  }, [rawScoreRecords]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.LEVELS, JSON.stringify(levels));
@@ -1013,44 +904,47 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(weakPointCategories));
   }, [weakPointCategories]);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DELETED_ENTITIES, JSON.stringify(deletedEntities));
-  }, [deletedEntities]);
-
+  // 1. Score Operations with updatedAt & soft-delete
   const addScoreBatch = (records: Omit<ScoreRecord, 'id' | 'recordedAt'>[]) => {
-    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
+    const nowStr = new Date(now).toISOString().replace('T', ' ').substring(0, 19);
     const newItems: ScoreRecord[] = records.map((r, idx) => ({
       ...r,
-      id: `scr_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `scr_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
       recordedAt: nowStr,
-      updatedAt: nowIso
+      updatedAt: now,
+      isDeleted: false,
+      weakPoints: Array.isArray(r.weakPoints) ? r.weakPoints : []
     }));
-    setScoreRecords(prev => [...newItems, ...prev]);
+    setRawScoreRecords(prev => [...newItems, ...prev]);
   };
 
   const addScoreBatchAndSync = async (
     records: Omit<ScoreRecord, 'id' | 'recordedAt'>[],
     options?: { syncToCloud?: boolean; teacherName?: string }
   ): Promise<ScoreBatchSyncResult> => {
-    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
+    const nowStr = new Date(now).toISOString().replace('T', ' ').substring(0, 19);
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
 
     const newItems: ScoreRecord[] = records.map((r, idx) => ({
       ...r,
-      id: `scr_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `scr_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
       recordedAt: nowStr,
-      updatedAt: nowIso
+      updatedAt: now,
+      isDeleted: false,
+      weakPoints: Array.isArray(r.weakPoints) ? r.weakPoints : []
     }));
 
-    // 1. Immediately update local state & persistence
-    const updatedRecords = [...newItems, ...scoreRecords];
-    setScoreRecords(updatedRecords);
-    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(updatedRecords));
+    // 1. Update local raw state & persistence
+    const updatedRawRecords = [...newItems, ...rawScoreRecords];
+    setRawScoreRecords(updatedRawRecords);
+    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(updatedRawRecords));
 
     const shouldSyncCloud = options?.syncToCloud !== false;
     const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
+
+    const activeTotalCount = updatedRawRecords.filter(r => !r.isDeleted).length;
 
     if (!shouldSyncCloud || !isCloudReady) {
       const msg = !isCloudReady
@@ -1062,7 +956,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         success: true,
         message: `本地录入保存了 ${newItems.length} 条成绩`,
         operatorTeacher,
-        totalRecordsCount: updatedRecords.length
+        totalRecordsCount: activeTotalCount
       });
 
       return {
@@ -1070,7 +964,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         newRecords: newItems,
         cloudSynced: false,
         cloudMessage: msg,
-        totalRecordsCount: updatedRecords.length
+        totalRecordsCount: activeTotalCount
       };
     }
 
@@ -1081,10 +975,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const fullLocalData = {
         version: '2.0',
-        exportedAt: nowIso,
-        classes,
-        students,
-        scoreRecords: updatedRecords,
+        exportedAt: new Date().toISOString(),
+        classes: rawClasses,
+        students: rawStudents,
+        scoreRecords: updatedRawRecords,
         levels,
         units,
         teachers,
@@ -1106,10 +1000,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setLatestMergeReport(res.report);
         }
         updateGistConfig({
-          lastSyncedAt: nowIso
+          lastSyncedAt: new Date().toISOString()
         });
 
-        const totalCount = res.data?.scoreRecords?.length || updatedRecords.length;
+        const totalCount = res.report?.totalScoresCount || res.data?.scoreRecords?.filter((r: any) => !r.isDeleted).length || activeTotalCount;
         const incoming = res.report?.incomingScoresCount || 0;
         const successMsg = incoming > 0
           ? `✅ 成功归档并同步至云端！本次上传 ${newItems.length} 条，并融合了其他老师的 ${incoming} 条最新成绩`
@@ -1143,8 +1037,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           incomingStudentsCount: res.report?.incomingStudentsCount,
           incomingClassesCount: res.report?.incomingClassesCount,
           totalScoresCount: totalCount,
-          totalStudentsCount: res.data?.students?.length || students.length,
-          totalClassesCount: res.data?.classes?.length || classes.length,
+          totalStudentsCount: res.report?.totalStudentsCount || students.length,
+          totalClassesCount: res.report?.totalClassesCount || classes.length,
           incomingStudentNames: res.report?.incomingStudentNames,
           incomingClassNames: res.report?.incomingClassNames,
           incomingScoreSamples: res.report?.incomingScoreSamples,
@@ -1168,7 +1062,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           success: false,
           message: `云端同步失败: ${res.message}`,
           operatorTeacher,
-          totalRecordsCount: updatedRecords.length
+          totalRecordsCount: activeTotalCount
         });
 
         return {
@@ -1176,7 +1070,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           newRecords: newItems,
           cloudSynced: false,
           cloudMessage: errMsg,
-          totalRecordsCount: updatedRecords.length
+          totalRecordsCount: activeTotalCount
         };
       }
     } catch (err: any) {
@@ -1187,7 +1081,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         newRecords: newItems,
         cloudSynced: false,
         cloudMessage: errMsg,
-        totalRecordsCount: updatedRecords.length
+        totalRecordsCount: activeTotalCount
       };
     } finally {
       setIsSyncingGist(false);
@@ -1195,81 +1089,64 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateScoreRecord = (id: string, updated: Partial<ScoreRecord>) => {
-    const nowIso = new Date().toISOString();
-    setScoreRecords(prev =>
-      prev.map(item => (item.id === id ? { ...item, ...updated, updatedAt: nowIso } : item))
+    const now = Date.now();
+    setRawScoreRecords(prev =>
+      prev.map(item => (item.id === id ? { ...item, ...updated, updatedAt: now, isDeleted: false } : item))
     );
   };
 
   const deleteScoreRecord = (id: string) => {
     const now = Date.now();
-    const target = scoreRecords.find(item => item.id === id);
-    const sig = target ? getScoreSignature(target) : '';
-
-    setDeletedEntities(prev => ({
-      ...prev,
-      scoreRecords: {
-        ...(prev.scoreRecords || {}),
-        [id]: now,
-        ...(sig ? { [sig]: now } : {})
-      }
-    }));
-    setScoreRecords(prev => prev.filter(item => item.id !== id));
+    setRawScoreRecords(prev =>
+      prev.map(item => (item.id === id ? { ...item, isDeleted: true, updatedAt: now } : item))
+    );
   };
 
   const deleteScoreBatch = (batchId: string) => {
     const now = Date.now();
-    const recordsToDelete = scoreRecords.filter(item => item.batchId === batchId);
-    setDeletedEntities(prev => {
-      const nextScoresDel = { ...(prev.scoreRecords || {}) };
-      recordsToDelete.forEach(r => {
-        nextScoresDel[r.id] = now;
-        const sig = getScoreSignature(r);
-        if (sig) nextScoresDel[sig] = now;
-      });
-      return {
-        ...prev,
-        scoreRecords: nextScoresDel,
-      };
-    });
-    setScoreRecords(prev => prev.filter(item => item.batchId !== batchId));
+    setRawScoreRecords(prev =>
+      prev.map(item => (item.batchId === batchId ? { ...item, isDeleted: true, updatedAt: now } : item))
+    );
   };
 
+  // 2. Class Operations
   const addClass = (cls: Omit<ClassGroup, 'id'>): ClassGroup => {
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const levelVal = cls.currentLevel || cls.level || 'BF1';
     const newClass: ClassGroup = {
       ...cls,
       level: levelVal,
       currentLevel: levelVal,
-      id: `cls_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      updatedAt: nowIso,
+      id: `cls_${now}_${Math.random().toString(36).substring(2, 6)}`,
+      updatedAt: now,
+      isDeleted: false,
     };
-    setClasses(prev => [...prev, newClass]);
+    setRawClasses(prev => [...prev, newClass]);
     return newClass;
   };
 
   const batchAddClasses = (classesList: Omit<ClassGroup, 'id'>[]): ClassGroup[] => {
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const created: ClassGroup[] = classesList.map((c, idx) => {
       const levelVal = c.currentLevel || c.level || 'BF1';
       return {
         ...c,
         level: levelVal,
         currentLevel: levelVal,
-        id: `cls_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
-        updatedAt: nowIso,
+        id: `cls_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+        updatedAt: now,
+        isDeleted: false,
       };
     });
-    setClasses(prev => [...prev, ...created]);
+    setRawClasses(prev => [...prev, ...created]);
     return created;
   };
 
   const updateClass = (id: string, updated: Partial<ClassGroup>, syncStudentsLevel: boolean = true) => {
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const effectiveLevel = updated.currentLevel || updated.level;
 
-    setClasses(prev =>
+    setRawClasses(prev =>
       prev.map(c => {
         if (c.id === id) {
           const nextLevel = effectiveLevel || c.currentLevel || c.level || 'BF1';
@@ -1278,27 +1155,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             ...updated,
             level: nextLevel,
             currentLevel: nextLevel,
-            updatedAt: nowIso,
+            updatedAt: now,
+            isDeleted: false,
           };
         }
         return c;
       })
     );
 
-    // Synchronize currentLevel to all students enrolled in this class
     if (effectiveLevel && syncStudentsLevel) {
-      setStudents(prev =>
+      setRawStudents(prev =>
         prev.map(s =>
           s.classId === id
-            ? { ...s, currentLevel: effectiveLevel, updatedAt: nowIso }
+            ? { ...s, currentLevel: effectiveLevel, updatedAt: now }
             : s
         )
       );
     }
 
     if (updated.name) {
-      setScoreRecords(prev =>
-        prev.map(r => (r.classId === id ? { ...r, className: updated.name!, updatedAt: nowIso } : r))
+      setRawScoreRecords(prev =>
+        prev.map(r => (r.classId === id ? { ...r, className: updated.name!, updatedAt: now } : r))
       );
     }
   };
@@ -1309,18 +1186,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     syncStudentsLevel: boolean = true,
     options?: { teacherName?: string }
   ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport; affectedStudentCount?: number }> => {
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
 
-    const prevClass = classes.find(c => c.id === id);
+    const prevClass = rawClasses.find(c => c.id === id);
     const oldLevel = prevClass?.currentLevel || prevClass?.level || 'BF1';
     const newLevel = updated.currentLevel || updated.level || oldLevel;
     const levelChanged = oldLevel.trim().toUpperCase() !== newLevel.trim().toUpperCase();
     const oldName = prevClass?.name || '未知班级';
     const newName = updated.name ? updated.name.trim() : oldName;
 
-    // 1. Calculate affected students & outgoing updates
-    const affectedStudents = students.filter(s => s.classId === id);
+    const affectedStudents = rawStudents.filter(s => !s.isDeleted && s.classId === id);
     const outgoingStudentUpdates: { studentId: string; studentName: string; field: string; from?: string; to?: string; description: string }[] = [];
 
     if (newLevel && syncStudentsLevel) {
@@ -1352,8 +1228,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     ];
 
-    // 2. Perform local update immediately
-    const nextClasses = classes.map(c => {
+    const nextClasses = rawClasses.map(c => {
       if (c.id === id) {
         return {
           ...c,
@@ -1361,37 +1236,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           name: newName,
           level: newLevel,
           currentLevel: newLevel,
-          updatedAt: nowIso
+          updatedAt: now,
+          isDeleted: false
         };
       }
       return c;
     });
-    setClasses(nextClasses);
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
+    setRawClasses(nextClasses);
 
-    let nextStudents = students;
+    let nextStudents = rawStudents;
     if (newLevel && syncStudentsLevel) {
-      nextStudents = students.map(s => {
+      nextStudents = rawStudents.map(s => {
         if (s.classId === id) {
           return {
             ...s,
             currentLevel: newLevel,
-            updatedAt: nowIso
+            updatedAt: now
           };
         }
         return s;
       });
-      setStudents(nextStudents);
-      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+      setRawStudents(nextStudents);
     }
 
-    let nextRecords = scoreRecords;
+    let nextRecords = rawScoreRecords;
     if (updated.name && updated.name !== oldName) {
-      nextRecords = scoreRecords.map(r =>
-        r.classId === id ? { ...r, className: updated.name!, updatedAt: nowIso } : r
+      nextRecords = rawScoreRecords.map(r =>
+        r.classId === id ? { ...r, className: updated.name!, updatedAt: now } : r
       );
-      setScoreRecords(nextRecords);
-      localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
+      setRawScoreRecords(nextRecords);
     }
 
     const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
@@ -1410,9 +1283,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         outgoingClassesUpdated: 1,
         outgoingStudentUpdates,
         outgoingClassUpdates,
-        totalStudentsCount: nextStudents.length,
-        totalClassesCount: nextClasses.length,
-        totalScoresCount: nextRecords.length
+        totalStudentsCount: nextStudents.filter(s => !s.isDeleted).length,
+        totalClassesCount: nextClasses.filter(c => !c.isDeleted).length,
+        totalScoresCount: nextRecords.filter(r => !r.isDeleted).length
       });
 
       return {
@@ -1422,14 +1295,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
-    // 3. Perform Cloud Sync & Smart Merge
     setIsSyncingGist(true);
     setGistLastMessage(`正在将班级【${newName}】${levelChanged ? `及 ${outgoingStudentUpdates.length} 位学员新级别` : ''}加密同步至云端...`);
 
     try {
       const fullLocalData = {
         version: '2.0',
-        exportedAt: nowIso,
+        exportedAt: new Date().toISOString(),
         classes: nextClasses,
         students: nextStudents,
         scoreRecords: nextRecords,
@@ -1437,7 +1309,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         units,
         teachers,
         weakPointCategories,
-        deletedEntities
       };
 
       const res = await pushDataToGistWithSmartMerge(
@@ -1455,7 +1326,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setLatestMergeReport(res.report);
         }
         updateGistConfig({
-          lastSyncedAt: nowIso
+          lastSyncedAt: new Date().toISOString()
         });
 
         const incomingScores = res.report?.incomingScoresCount || 0;
@@ -1469,7 +1340,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           message: `班级【${newName}】级别设为【${newLevel}】，联动更新 ${outgoingStudentUpdates.length} 位学员在读级别并同步推送到云端`,
           operatorTeacher,
           incomingCount: incomingScores,
-          totalRecordsCount: res.data?.scoreRecords?.length || nextRecords.length
+          totalRecordsCount: res.report?.totalScoresCount || nextRecords.filter(r => !r.isDeleted).length
         });
 
         showSyncNotification({
@@ -1489,9 +1360,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           outgoingClassesUpdated: 1,
           outgoingStudentUpdates,
           outgoingClassUpdates,
-          totalStudentsCount: res.data?.students?.length || nextStudents.length,
-          totalClassesCount: res.data?.classes?.length || nextClasses.length,
-          totalScoresCount: res.data?.scoreRecords?.length || nextRecords.length,
+          totalStudentsCount: res.report?.totalStudentsCount || nextStudents.filter(s => !s.isDeleted).length,
+          totalClassesCount: res.report?.totalClassesCount || nextClasses.filter(c => !c.isDeleted).length,
+          totalScoresCount: res.report?.totalScoresCount || nextRecords.filter(r => !r.isDeleted).length,
           incomingScoresCount: incomingScores,
           incomingStudentsCount: incomingStudents,
           incomingStudentUpdates: res.report?.incomingStudentUpdates,
@@ -1522,9 +1393,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           outgoingClassesUpdated: 1,
           outgoingStudentUpdates,
           outgoingClassUpdates,
-          totalStudentsCount: nextStudents.length,
-          totalClassesCount: nextClasses.length,
-          totalScoresCount: nextRecords.length
+          totalStudentsCount: nextStudents.filter(s => !s.isDeleted).length,
+          totalClassesCount: nextClasses.filter(c => !c.isDeleted).length,
+          totalScoresCount: nextRecords.filter(r => !r.isDeleted).length
         });
 
         return {
@@ -1588,37 +1459,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteClass = (id: string) => {
     const now = Date.now();
-    const nowIso = new Date(now).toISOString();
-    const targetClass = classes.find(c => c.id === id);
-
-    setDeletedEntities(prev => ({
-      ...prev,
-      classes: {
-        ...(prev.classes || {}),
-        [id]: now,
-        ...(targetClass?.name ? { [targetClass.name]: now } : {})
-      }
-    }));
-
-    setClasses(prev => prev.filter(c => c.id !== id));
-    // Clear classId for students that were in this deleted class so they safely become unassigned
-    setStudents(prev =>
-      prev.map(s =>
-        s.classId === id
-          ? { ...s, classId: '', updatedAt: nowIso }
-          : s
-      )
+    setRawClasses(prev =>
+      prev.map(c => c.id === id ? { ...c, isDeleted: true, updatedAt: now } : c)
+    );
+    setRawStudents(prev =>
+      prev.map(s => s.classId === id ? { ...s, classId: '', updatedAt: now } : s)
     );
   };
 
+  // 3. Student Operations
   const addStudent = (student: Omit<Student, 'id'>): Student => {
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const newStudent: Student = {
       ...student,
-      id: `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      updatedAt: nowIso,
+      id: `std_${now}_${Math.random().toString(36).substring(2, 6)}`,
+      updatedAt: now,
+      isDeleted: false,
+      status: student.status || 'active'
     };
-    setStudents(prev => [...prev, newStudent]);
+    setRawStudents(prev => [...prev, newStudent]);
     return newStudent;
   };
 
@@ -1662,13 +1521,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateStudent = (id: string, updated: Partial<Student>) => {
-    const nowIso = new Date().toISOString();
-    setStudents(prev =>
-      prev.map(s => (s.id === id ? { ...s, ...updated, updatedAt: nowIso } : s))
+    const now = Date.now();
+    setRawStudents(prev =>
+      prev.map(s => (s.id === id ? { ...s, ...updated, updatedAt: now, isDeleted: false } : s))
     );
     if (updated.name) {
-      setScoreRecords(prev =>
-        prev.map(r => (r.studentId === id ? { ...r, studentName: updated.name!, updatedAt: nowIso } : r))
+      setRawScoreRecords(prev =>
+        prev.map(r => (r.studentId === id ? { ...r, studentName: updated.name!, updatedAt: now } : r))
       );
     }
   };
@@ -1678,10 +1537,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     updated: Partial<Student>,
     options?: { teacherName?: string }
   ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
 
-    const prevStudent = students.find(s => s.id === id);
+    const prevStudent = rawStudents.find(s => s.id === id);
     const oldLevel = prevStudent?.currentLevel || 'BF1';
     const newLevel = updated.currentLevel || oldLevel;
     const levelChanged = oldLevel.trim().toUpperCase() !== newLevel.trim().toUpperCase();
@@ -1700,19 +1559,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     ];
 
-    const nextStudents = students.map(s =>
-      s.id === id ? { ...s, ...updated, currentLevel: newLevel, updatedAt: nowIso } : s
+    const nextStudents = rawStudents.map(s =>
+      s.id === id ? { ...s, ...updated, currentLevel: newLevel, updatedAt: now, isDeleted: false } : s
     );
-    setStudents(nextStudents);
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+    setRawStudents(nextStudents);
 
-    let nextRecords = scoreRecords;
+    let nextRecords = rawScoreRecords;
     if (updated.name && updated.name !== prevStudent?.name) {
-      nextRecords = scoreRecords.map(r =>
-        r.studentId === id ? { ...r, studentName: updated.name!, updatedAt: nowIso } : r
+      nextRecords = rawScoreRecords.map(r =>
+        r.studentId === id ? { ...r, studentName: updated.name!, updatedAt: now } : r
       );
-      setScoreRecords(nextRecords);
-      localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
+      setRawScoreRecords(nextRecords);
     }
 
     const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
@@ -1729,9 +1586,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         teacherName: operatorTeacher,
         outgoingStudentsUpdated: 1,
         outgoingStudentUpdates,
-        totalStudentsCount: nextStudents.length,
+        totalStudentsCount: nextStudents.filter(s => !s.isDeleted).length,
         totalClassesCount: classes.length,
-        totalScoresCount: nextRecords.length
+        totalScoresCount: nextRecords.filter(r => !r.isDeleted).length
       });
 
       return {
@@ -1746,15 +1603,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const fullLocalData = {
         version: '2.0',
-        exportedAt: nowIso,
-        classes,
+        exportedAt: new Date().toISOString(),
+        classes: rawClasses,
         students: nextStudents,
         scoreRecords: nextRecords,
         levels,
         units,
         teachers,
         weakPointCategories,
-        deletedEntities
       };
 
       const res = await pushDataToGistWithSmartMerge(
@@ -1772,7 +1628,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setLatestMergeReport(res.report);
         }
         updateGistConfig({
-          lastSyncedAt: nowIso
+          lastSyncedAt: new Date().toISOString()
         });
 
         const successMsg = `✅ 学员【${studentName}】档案及级别已成功同步至云端！`;
@@ -1783,7 +1639,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           success: true,
           message: `学员【${studentName}】档案更新（级别: ${newLevel}）并已同步至云端`,
           operatorTeacher,
-          totalRecordsCount: res.data?.scoreRecords?.length || nextRecords.length
+          totalRecordsCount: res.report?.totalScoresCount || nextRecords.filter(r => !r.isDeleted).length
         });
 
         showSyncNotification({
@@ -1801,9 +1657,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           gistId: gistConfig.gistId,
           outgoingStudentsUpdated: 1,
           outgoingStudentUpdates,
-          totalStudentsCount: res.data?.students?.length || nextStudents.length,
-          totalClassesCount: res.data?.classes?.length || classes.length,
-          totalScoresCount: res.data?.scoreRecords?.length || nextRecords.length,
+          totalStudentsCount: res.report?.totalStudentsCount || nextStudents.filter(s => !s.isDeleted).length,
+          totalClassesCount: res.report?.totalClassesCount || classes.length,
+          totalScoresCount: res.report?.totalScoresCount || nextRecords.filter(r => !r.isDeleted).length,
           incomingScoresCount: res.report?.incomingScoresCount || 0,
           incomingStudentsCount: res.report?.incomingStudentsCount || 0,
           incomingStudentUpdates: res.report?.incomingStudentUpdates,
@@ -1830,9 +1686,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           gistId: gistConfig.gistId,
           outgoingStudentsUpdated: 1,
           outgoingStudentUpdates,
-          totalStudentsCount: nextStudents.length,
+          totalStudentsCount: nextStudents.filter(s => !s.isDeleted).length,
           totalClassesCount: classes.length,
-          totalScoresCount: nextRecords.length
+          totalScoresCount: nextRecords.filter(r => !r.isDeleted).length
         });
 
         return {
@@ -1861,12 +1717,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, message: '请选择需要调整级别的学员' };
     }
 
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
 
     const outgoingStudentUpdates: { studentId: string; studentName: string; field: string; from?: string; to?: string; description: string }[] = [];
 
-    const nextStudents = students.map(s => {
+    const nextStudents = rawStudents.map(s => {
       if (studentIds.includes(s.id)) {
         const oldLvl = s.currentLevel || 'BF1';
         outgoingStudentUpdates.push({
@@ -1880,14 +1736,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return {
           ...s,
           currentLevel: newLevel,
-          updatedAt: nowIso
+          updatedAt: now,
+          isDeleted: false
         };
       }
       return s;
     });
 
-    setStudents(nextStudents);
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+    setRawStudents(nextStudents);
 
     const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
 
@@ -1903,7 +1759,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         teacherName: operatorTeacher,
         outgoingStudentsUpdated: outgoingStudentUpdates.length,
         outgoingStudentUpdates,
-        totalStudentsCount: nextStudents.length,
+        totalStudentsCount: nextStudents.filter(s => !s.isDeleted).length,
         totalClassesCount: classes.length,
         totalScoresCount: scoreRecords.length
       });
@@ -1920,15 +1776,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const fullLocalData = {
         version: '2.0',
-        exportedAt: nowIso,
-        classes,
+        exportedAt: new Date().toISOString(),
+        classes: rawClasses,
         students: nextStudents,
-        scoreRecords,
+        scoreRecords: rawScoreRecords,
         levels,
         units,
         teachers,
         weakPointCategories,
-        deletedEntities
       };
 
       const res = await pushDataToGistWithSmartMerge(
@@ -1946,7 +1801,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setLatestMergeReport(res.report);
         }
         updateGistConfig({
-          lastSyncedAt: nowIso
+          lastSyncedAt: new Date().toISOString()
         });
 
         const successMsg = `✅ 已成功批量更新 ${outgoingStudentUpdates.length} 位学员在读级别为【${newLevel}】并同步至云端！`;
@@ -1957,7 +1812,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           success: true,
           message: `批量将 ${outgoingStudentUpdates.length} 位学员在读级别调整为【${newLevel}】并同步云端`,
           operatorTeacher,
-          totalRecordsCount: res.data?.scoreRecords?.length || scoreRecords.length
+          totalRecordsCount: res.report?.totalScoresCount || scoreRecords.length
         });
 
         showSyncNotification({
@@ -1971,9 +1826,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           gistId: gistConfig.gistId,
           outgoingStudentsUpdated: outgoingStudentUpdates.length,
           outgoingStudentUpdates,
-          totalStudentsCount: res.data?.students?.length || nextStudents.length,
-          totalClassesCount: res.data?.classes?.length || classes.length,
-          totalScoresCount: res.data?.scoreRecords?.length || scoreRecords.length,
+          totalStudentsCount: res.report?.totalStudentsCount || nextStudents.filter(s => !s.isDeleted).length,
+          totalClassesCount: res.report?.totalClassesCount || classes.length,
+          totalScoresCount: res.report?.totalScoresCount || scoreRecords.length,
           incomingScoresCount: res.report?.incomingScoresCount || 0,
           incomingStudentsCount: res.report?.incomingStudentsCount || 0,
           incomingStudentUpdates: res.report?.incomingStudentUpdates,
@@ -2000,7 +1855,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           gistId: gistConfig.gistId,
           outgoingStudentsUpdated: outgoingStudentUpdates.length,
           outgoingStudentUpdates,
-          totalStudentsCount: nextStudents.length,
+          totalStudentsCount: nextStudents.filter(s => !s.isDeleted).length,
           totalClassesCount: classes.length,
           totalScoresCount: scoreRecords.length
         });
@@ -2024,72 +1879,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteStudent = (id: string) => {
     const now = Date.now();
-    const targetStudent = students.find(s => s.id === id);
-    const relatedScores = scoreRecords.filter(r => r.studentId === id);
-
-    setDeletedEntities(prev => {
-      const nextStudentsDel = {
-        ...(prev.students || {}),
-        [id]: now,
-        ...(targetStudent?.name ? { [targetStudent.name]: now } : {})
-      };
-      const nextScoresDel = { ...(prev.scoreRecords || {}) };
-      relatedScores.forEach(r => {
-        nextScoresDel[r.id] = now;
-        const sig = getScoreSignature(r);
-        if (sig) nextScoresDel[sig] = now;
-      });
-
-      return {
-        ...prev,
-        students: nextStudentsDel,
-        scoreRecords: nextScoresDel,
-      };
-    });
-
-    setStudents(prev => prev.filter(s => s.id !== id));
-    setScoreRecords(prev => prev.filter(r => r.studentId !== id));
+    setRawStudents(prev =>
+      prev.map(s => s.id === id ? { ...s, isDeleted: true, updatedAt: now } : s)
+    );
+    setRawScoreRecords(prev =>
+      prev.map(r => r.studentId === id ? { ...r, isDeleted: true, updatedAt: now } : r)
+    );
   };
 
   const batchAddStudents = (newStudentsList: Omit<Student, 'id'>[]) => {
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const created: Student[] = newStudentsList.map((s, idx) => ({
       ...s,
-      id: `std_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
-      updatedAt: nowIso,
+      id: `std_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+      updatedAt: now,
+      isDeleted: false,
+      status: s.status || 'active'
     }));
-    setStudents(prev => [...prev, ...created]);
+    setRawStudents(prev => [...prev, ...created]);
   };
 
   const batchDeleteStudents = (studentIds: string[]) => {
     if (!studentIds || studentIds.length === 0) return;
     const now = Date.now();
-    const relatedScores = scoreRecords.filter(r => studentIds.includes(r.studentId));
-
-    setDeletedEntities(prev => {
-      const nextStudentsDel = { ...(prev.students || {}) };
-      studentIds.forEach(sid => {
-        nextStudentsDel[sid] = now;
-        const sObj = students.find(s => s.id === sid);
-        if (sObj?.name) nextStudentsDel[sObj.name] = now;
-      });
-
-      const nextScoresDel = { ...(prev.scoreRecords || {}) };
-      relatedScores.forEach(r => {
-        nextScoresDel[r.id] = now;
-        const sig = getScoreSignature(r);
-        if (sig) nextScoresDel[sig] = now;
-      });
-
-      return {
-        ...prev,
-        students: nextStudentsDel,
-        scoreRecords: nextScoresDel,
-      };
-    });
-
-    setStudents(prev => prev.filter(s => !studentIds.includes(s.id)));
-    setScoreRecords(prev => prev.filter(r => !studentIds.includes(r.studentId)));
+    const idSet = new Set(studentIds);
+    setRawStudents(prev =>
+      prev.map(s => idSet.has(s.id) ? { ...s, isDeleted: true, updatedAt: now } : s)
+    );
+    setRawScoreRecords(prev =>
+      prev.map(r => idSet.has(r.studentId) ? { ...r, isDeleted: true, updatedAt: now } : r)
+    );
   };
 
   const transferStudent = (
@@ -2099,13 +1918,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     syncPastScores: boolean = false,
     reasonNote?: string
   ) => {
-    const targetClass = classes.find(c => c.id === targetClassId);
+    const targetClass = rawClasses.find(c => c.id === targetClassId);
     if (!targetClass) return;
 
-    const student = students.find(s => s.id === studentId);
+    const student = rawStudents.find(s => s.id === studentId);
     if (!student) return;
 
-    const fromClass = classes.find(c => c.id === student.classId);
+    const fromClass = rawClasses.find(c => c.id === student.classId);
     const dateStr = new Date().toISOString().split('T')[0];
     const transferLog = `[调班记录 ${dateStr}] 从「${fromClass?.name || '原班级'}」转至「${targetClass.name}」${reasonNote ? ` (${reasonNote})` : ''}`;
 
@@ -2114,9 +1933,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       : transferLog;
 
     const updatedLevel = newLevel || targetClass.level || student.currentLevel;
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
 
-    setStudents(prev =>
+    setRawStudents(prev =>
       prev.map(s =>
         s.id === studentId
           ? {
@@ -2124,17 +1943,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               classId: targetClassId,
               currentLevel: updatedLevel,
               notes: updatedNotes,
-              updatedAt: nowIso,
+              updatedAt: now,
+              isDeleted: false
             }
           : s
       )
     );
 
     if (syncPastScores) {
-      setScoreRecords(prev =>
+      setRawScoreRecords(prev =>
         prev.map(r =>
           r.studentId === studentId
-            ? { ...r, classId: targetClassId, className: targetClass.name, updatedAt: nowIso }
+            ? { ...r, classId: targetClassId, className: targetClass.name, updatedAt: now }
             : r
         )
       );
@@ -2148,16 +1968,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     syncPastScores: boolean = false,
     reasonNote?: string
   ) => {
-    const targetClass = classes.find(c => c.id === targetClassId);
+    const targetClass = rawClasses.find(c => c.id === targetClassId);
     if (!targetClass || studentIds.length === 0) return;
 
     const dateStr = new Date().toISOString().split('T')[0];
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
 
-    setStudents(prev =>
+    setRawStudents(prev =>
       prev.map(s => {
         if (!studentIds.includes(s.id)) return s;
-        const fromClass = classes.find(c => c.id === s.classId);
+        const fromClass = rawClasses.find(c => c.id === s.classId);
         const transferLog = `[调班记录 ${dateStr}] 从「${fromClass?.name || '原班级'}」转至「${targetClass.name}」${reasonNote ? ` (${reasonNote})` : ''}`;
         const updatedNotes = s.notes ? `${s.notes}\n${transferLog}` : transferLog;
         const updatedLevel = newLevel || targetClass.level || s.currentLevel;
@@ -2167,16 +1987,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           classId: targetClassId,
           currentLevel: updatedLevel,
           notes: updatedNotes,
-          updatedAt: nowIso,
+          updatedAt: now,
+          isDeleted: false
         };
       })
     );
 
     if (syncPastScores) {
-      setScoreRecords(prev =>
+      setRawScoreRecords(prev =>
         prev.map(r =>
           studentIds.includes(r.studentId)
-            ? { ...r, classId: targetClassId, className: targetClass.name, updatedAt: nowIso }
+            ? { ...r, classId: targetClassId, className: targetClass.name, updatedAt: now }
             : r
         )
       );
@@ -2184,17 +2005,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const suspendStudent = (studentId: string, reason?: string, removeFromClass: boolean = true) => {
-    const student = students.find(s => s.id === studentId);
+    const student = rawStudents.find(s => s.id === studentId);
     if (!student) return;
 
-    const currentClass = classes.find(c => c.id === student.classId);
+    const currentClass = rawClasses.find(c => c.id === student.classId);
     const dateStr = new Date().toISOString().split('T')[0];
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const reasonText = reason?.trim() || '暂缓学业';
     const suspendLog = `[停学记录 ${dateStr}] 原班级:「${currentClass?.name || '未分班'}」 原因: ${reasonText}`;
     const updatedNotes = student.notes ? `${student.notes}\n${suspendLog}` : suspendLog;
 
-    setStudents(prev =>
+    setRawStudents(prev =>
       prev.map(s =>
         s.id === studentId
           ? {
@@ -2205,7 +2026,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               previousClassId: s.classId || s.previousClassId,
               classId: removeFromClass ? '' : s.classId,
               notes: updatedNotes,
-              updatedAt: nowIso,
+              updatedAt: now,
+              isDeleted: false
             }
           : s
       )
@@ -2213,18 +2035,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const restoreStudent = (studentId: string, targetClassId?: string, newLevel?: string) => {
-    const student = students.find(s => s.id === studentId);
+    const student = rawStudents.find(s => s.id === studentId);
     if (!student) return;
 
     const destinationClassId = targetClassId || student.previousClassId || (classes[0]?.id || '');
-    const targetClass = classes.find(c => c.id === destinationClassId);
+    const targetClass = rawClasses.find(c => c.id === destinationClassId);
     const dateStr = new Date().toISOString().split('T')[0];
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const restoreLog = `[复学记录 ${dateStr}] 办理复学恢复就读，进入班级「${targetClass?.name || '待分班'}」`;
     const updatedNotes = student.notes ? `${student.notes}\n${restoreLog}` : restoreLog;
     const updatedLevel = newLevel || targetClass?.level || student.currentLevel;
 
-    setStudents(prev =>
+    setRawStudents(prev =>
       prev.map(s =>
         s.id === studentId
           ? {
@@ -2235,7 +2057,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               classId: destinationClassId,
               currentLevel: updatedLevel,
               notes: updatedNotes,
-              updatedAt: nowIso,
+              updatedAt: now,
+              isDeleted: false
             }
           : s
       )
@@ -2245,13 +2068,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const batchSuspendStudents = (studentIds: string[], reason?: string) => {
     if (!studentIds || studentIds.length === 0) return;
     const dateStr = new Date().toISOString().split('T')[0];
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
     const reasonText = reason?.trim() || '批量办理停学';
 
-    setStudents(prev =>
+    setRawStudents(prev =>
       prev.map(s => {
         if (!studentIds.includes(s.id)) return s;
-        const currentClass = classes.find(c => c.id === s.classId);
+        const currentClass = rawClasses.find(c => c.id === s.classId);
         const suspendLog = `[停学记录 ${dateStr}] 原班级:「${currentClass?.name || '未分班'}」 原因: ${reasonText}`;
         const updatedNotes = s.notes ? `${s.notes}\n${suspendLog}` : suspendLog;
         return {
@@ -2262,7 +2085,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           previousClassId: s.classId || s.previousClassId,
           classId: '',
           notes: updatedNotes,
-          updatedAt: nowIso,
+          updatedAt: now,
+          isDeleted: false
         };
       })
     );
@@ -2271,13 +2095,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const batchRestoreStudents = (studentIds: string[], targetClassId?: string) => {
     if (!studentIds || studentIds.length === 0) return;
     const dateStr = new Date().toISOString().split('T')[0];
-    const nowIso = new Date().toISOString();
+    const now = Date.now();
 
-    setStudents(prev =>
+    setRawStudents(prev =>
       prev.map(s => {
         if (!studentIds.includes(s.id)) return s;
         const destinationClassId = targetClassId || s.previousClassId || (classes[0]?.id || '');
-        const targetClass = classes.find(c => c.id === destinationClassId);
+        const targetClass = rawClasses.find(c => c.id === destinationClassId);
         const restoreLog = `[复学记录 ${dateStr}] 批量办理复学恢复就读，进入班级「${targetClass?.name || '待分班'}」`;
         const updatedNotes = s.notes ? `${s.notes}\n${restoreLog}` : restoreLog;
         return {
@@ -2288,7 +2112,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           classId: destinationClassId,
           currentLevel: targetClass?.level || s.currentLevel,
           notes: updatedNotes,
-          updatedAt: nowIso,
+          updatedAt: now,
+          isDeleted: false
         };
       })
     );
@@ -2297,63 +2122,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addLevel = (level: string) => {
     const trimmed = level.trim();
     if (trimmed && !levels.includes(trimmed)) {
-      setDeletedEntities(prev => {
-        const nextLevels = { ...(prev.levels || {}) };
-        delete nextLevels[trimmed];
-        return { ...prev, levels: nextLevels };
-      });
       setLevels(prev => [...prev, trimmed]);
     }
   };
 
   const deleteLevel = (level: string) => {
-    const now = Date.now();
-    setDeletedEntities(prev => ({
-      ...prev,
-      levels: { ...(prev.levels || {}), [level]: now }
-    }));
     setLevels(prev => prev.filter(l => l !== level));
   };
 
   const addUnit = (unit: string) => {
     const trimmed = unit.trim();
     if (trimmed && !units.includes(trimmed)) {
-      setDeletedEntities(prev => {
-        const nextUnits = { ...(prev.units || {}) };
-        delete nextUnits[trimmed];
-        return { ...prev, units: nextUnits };
-      });
       setUnits(prev => [...prev, trimmed]);
     }
   };
 
   const deleteUnit = (unit: string) => {
-    const now = Date.now();
-    setDeletedEntities(prev => ({
-      ...prev,
-      units: { ...(prev.units || {}), [unit]: now }
-    }));
     setUnits(prev => prev.filter(u => u !== unit));
   };
 
   const addTeacher = (teacher: string) => {
     const trimmed = teacher.trim();
     if (trimmed && !teachers.includes(trimmed)) {
-      setDeletedEntities(prev => {
-        const nextTeachers = { ...(prev.teachers || {}) };
-        delete nextTeachers[trimmed];
-        return { ...prev, teachers: nextTeachers };
-      });
       setTeachers(prev => [...prev, trimmed]);
     }
   };
 
   const deleteTeacher = (teacher: string) => {
-    const now = Date.now();
-    setDeletedEntities(prev => ({
-      ...prev,
-      teachers: { ...(prev.teachers || {}), [teacher]: now }
-    }));
     setTeachers(prev => prev.filter(t => t !== teacher));
   };
 
@@ -2376,37 +2171,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const clearStudentsAndClasses = () => {
     const now = Date.now();
-    setDeletedEntities(prev => {
-      const classesDel = { ...(prev.classes || {}) };
-      const studentsDel = { ...(prev.students || {}) };
-      const scoresDel = { ...(prev.scoreRecords || {}) };
-      classes.forEach(c => {
-        classesDel[c.id] = now;
-        if (c.name) classesDel[c.name] = now;
-      });
-      students.forEach(s => {
-        studentsDel[s.id] = now;
-      });
-      scoreRecords.forEach(r => {
-        scoresDel[r.id] = now;
-      });
-      return {
-        ...prev,
-        classes: classesDel,
-        students: studentsDel,
-        scoreRecords: scoresDel,
-      };
-    });
-    setClasses([]);
-    setStudents([]);
-    setScoreRecords([]);
+    setRawClasses(prev => prev.map(c => ({ ...c, isDeleted: true, updatedAt: now })));
+    setRawStudents(prev => prev.map(s => ({ ...s, isDeleted: true, updatedAt: now })));
+    setRawScoreRecords(prev => prev.map(r => ({ ...r, isDeleted: true, updatedAt: now })));
   };
 
   const resetToDemoData = () => {
-    setDeletedEntities({ classes: {}, students: {}, scoreRecords: {}, levels: {}, units: {}, teachers: {} });
-    setClasses(INITIAL_CLASSES);
-    setStudents(INITIAL_STUDENTS);
-    setScoreRecords(INITIAL_SCORE_RECORDS);
+    const now = Date.now();
+    setRawClasses(INITIAL_CLASSES.map(c => ({ ...normalizeClass(c), updatedAt: now, isDeleted: false })));
+    setRawStudents(INITIAL_STUDENTS.map(s => ({ ...normalizeStudent(s), updatedAt: now, isDeleted: false })));
+    setRawScoreRecords(INITIAL_SCORE_RECORDS.map(r => ({ ...normalizeScore(r), updatedAt: now, isDeleted: false })));
     setLevels(DEFAULT_LEVELS);
     setUnits(DEFAULT_UNITS);
     setTeachers(DEFAULT_TEACHERS);
@@ -2414,41 +2188,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const exportDataToJson = () => {
-    const backup = {
-      version: '2.0',
-      exportedAt: new Date().toISOString(),
-      classes,
-      students,
-      scoreRecords,
-      levels,
-      units,
-      teachers,
-      weakPointCategories,
-      deletedEntities,
-    };
+    const backup = getFullDatabaseObject();
     return JSON.stringify(backup, null, 2);
   };
 
   const importDataFromJson = (jsonStr: string): boolean => {
     try {
       const data = JSON.parse(jsonStr);
-      if (Array.isArray(data.classes) && Array.isArray(data.students) && Array.isArray(data.scoreRecords)) {
-        if (data.deletedEntities && typeof data.deletedEntities === 'object') {
-          setDeletedEntities(data.deletedEntities);
-        } else {
-          setDeletedEntities({ classes: {}, students: {}, scoreRecords: {}, levels: {}, units: {}, teachers: {} });
+      if (Array.isArray(data.classes) || Array.isArray(data.students) || Array.isArray(data.scoreRecords)) {
+        if (Array.isArray(data.classes)) {
+          const merged = mergeData(rawClasses, data.classes.map(normalizeClass));
+          setRawClasses(merged);
         }
-        setClasses(data.classes);
-        setStudents(data.students);
-        setScoreRecords(
-          data.scoreRecords.map((r: any) => ({
-            ...r,
-            weakPoints: Array.isArray(r.weakPoints) ? r.weakPoints : []
-          }))
-        );
-        if (Array.isArray(data.levels)) setLevels(data.levels);
-        if (Array.isArray(data.units)) setUnits(data.units);
-        if (Array.isArray(data.teachers)) setTeachers(data.teachers);
+        if (Array.isArray(data.students)) {
+          const merged = mergeData(rawStudents, data.students.map(normalizeStudent));
+          setRawStudents(merged);
+        }
+        if (Array.isArray(data.scoreRecords)) {
+          const merged = mergeData(rawScoreRecords, data.scoreRecords.map(normalizeScore));
+          setRawScoreRecords(merged);
+        }
+        if (Array.isArray(data.levels)) setLevels(Array.from(new Set([...levels, ...data.levels.filter(Boolean)])));
+        if (Array.isArray(data.units)) setUnits(Array.from(new Set([...units, ...data.units.filter(Boolean)])));
+        if (Array.isArray(data.teachers)) setTeachers(Array.from(new Set([...teachers, ...data.teachers.filter(Boolean)])));
         if (Array.isArray(data.weakPointCategories)) setWeakPointCategories(data.weakPointCategories);
         return true;
       }

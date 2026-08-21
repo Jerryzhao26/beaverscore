@@ -19,7 +19,8 @@ export interface Student {
   suspendedAt?: string; // 停学日期 (YYYY-MM-DD)
   suspendReason?: string; // 停学原因
   previousClassId?: string; // 停学前所在班级
-  updatedAt?: string;
+  updatedAt?: number; // 毫秒级时间戳 Date.now()
+  isDeleted?: boolean; // 软删除标记，默认为 false
 }
 
 export interface ClassGroup {
@@ -29,7 +30,8 @@ export interface ClassGroup {
   currentLevel?: string;
   academicYear?: string;
   teacherName: string;
-  updatedAt?: string;
+  updatedAt?: number; // 毫秒级时间戳 Date.now()
+  isDeleted?: boolean; // 软删除标记，默认为 false
 }
 
 export interface ScoreRecord {
@@ -52,7 +54,8 @@ export interface ScoreRecord {
   mistakeDetails?: string; // 详细失分说明
   teacherRemark?: string;  // 教师评语与指导建议
   recordedAt: string;
-  updatedAt?: string;
+  updatedAt?: number; // 毫秒级时间戳 Date.now()
+  isDeleted?: boolean; // 软删除标记，默认为 false
   batchId?: string;
 }
 

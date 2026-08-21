@@ -237,7 +237,70 @@ export interface MergeReport {
 }
 
 /**
- * Intelligent 3-way/Incremental Merge for multi-teacher concurrent scoring with tombstone deletion tracking
+ * 2. 核心合并算法 (Merge Logic)
+ * 纯粹通用的基于 updatedAt 时间戳与 isDeleted 软删除的双向合并算法
+ * - 遍历 localList 与 remoteList，按 id 匹配
+ * - 若 id 仅存在于单侧，直接保留
+ * - 若两边都存在同一个 id，对比 updatedAt，保留时间戳较大的最新修改版本（无论是内容更新还是 isDeleted: true 软删除）
+ */
+export function mergeData<T extends { id: string; updatedAt?: number | string; isDeleted?: boolean }>(
+  localList: T[] = [],
+  remoteList: T[] = []
+): T[] {
+  const map = new Map<string, T>();
+
+  const normalizeItem = (item: T): T => {
+    const rawTime = item.updatedAt;
+    const numTime = typeof rawTime === 'number' && !isNaN(rawTime)
+      ? rawTime
+      : (rawTime ? new Date(rawTime).getTime() || 0 : 0);
+    return {
+      ...item,
+      updatedAt: numTime,
+      isDeleted: Boolean(item.isDeleted),
+    };
+  };
+
+  // 1. 添加所有本地项
+  for (const rawItem of (Array.isArray(localList) ? localList : [])) {
+    if (!rawItem || !rawItem.id) continue;
+    const item = normalizeItem(rawItem);
+    map.set(item.id, item);
+  }
+
+  // 2. 双向合并云端项
+  for (const rawRemote of (Array.isArray(remoteList) ? remoteList : [])) {
+    if (!rawRemote || !rawRemote.id) continue;
+    const remote = normalizeItem(rawRemote);
+    const local = map.get(remote.id);
+
+    if (!local) {
+      map.set(remote.id, remote);
+    } else {
+      const localTime = Number(local.updatedAt) || 0;
+      const remoteTime = Number(remote.updatedAt) || 0;
+
+      if (remoteTime > localTime) {
+        map.set(remote.id, remote);
+      } else if (localTime > remoteTime) {
+        map.set(remote.id, local);
+      } else {
+        // 时间戳相同时，以最新包含字段融合，若其中一方已软删除则优先标记为删除
+        map.set(remote.id, {
+          ...remote,
+          ...local,
+          updatedAt: localTime,
+          isDeleted: Boolean(local.isDeleted || remote.isDeleted),
+        });
+      }
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/**
+ * 完整数据集双向合并函数：采用时间戳与软删除算法合并班级、学员、成绩及字典数据
  */
 export function mergeDatasets(localData: any, remoteData: any): { merged: any; report: MergeReport } {
   const report: MergeReport = {
@@ -271,119 +334,23 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
     newDictionaries: { levels: [], units: [], teachers: [] }
   };
 
-  // Extract and combine deletion tombstones
-  const localDel: DeletedEntities = localData?.deletedEntities || { classes: {}, students: {}, scoreRecords: {}, levels: {}, units: {}, teachers: {} };
-  const remoteDel: DeletedEntities = remoteData?.deletedEntities || { classes: {}, students: {}, scoreRecords: {}, levels: {}, units: {}, teachers: {} };
+  const rawLocalScores: ScoreRecord[] = Array.isArray(localData?.scoreRecords) ? localData.scoreRecords : [];
+  const rawRemoteScores: ScoreRecord[] = Array.isArray(remoteData?.scoreRecords) ? remoteData.scoreRecords : [];
 
-  const mergedDel: DeletedEntities = {
-    classes: { ...(remoteDel.classes || {}), ...(localDel.classes || {}) },
-    students: { ...(remoteDel.students || {}), ...(localDel.students || {}) },
-    scoreRecords: { ...(remoteDel.scoreRecords || {}), ...(localDel.scoreRecords || {}) },
-    levels: { ...(remoteDel.levels || {}), ...(localDel.levels || {}) },
-    units: { ...(remoteDel.units || {}), ...(localDel.units || {}) },
-    teachers: { ...(remoteDel.teachers || {}), ...(localDel.teachers || {}) },
-  };
+  const rawLocalStudents: Student[] = Array.isArray(localData?.students) ? localData.students : [];
+  const rawRemoteStudents: Student[] = Array.isArray(remoteData?.students) ? remoteData.students : [];
 
-  // Safe timestamp parser to avoid NaN comparisons
-  const safeTime = (val: any): number => {
-    if (!val) return 0;
-    const t = new Date(val).getTime();
-    return isNaN(t) ? 0 : t;
-  };
+  const rawLocalClasses: ClassGroup[] = Array.isArray(localData?.classes) ? localData.classes : [];
+  const rawRemoteClasses: ClassGroup[] = Array.isArray(remoteData?.classes) ? remoteData.classes : [];
 
-  const getScoreRecordTime = (sc: ScoreRecord): number => {
-    return Math.max(
-      safeTime(sc.updatedAt),
-      safeTime(sc.recordedAt),
-      safeTime(sc.examDate)
-    );
-  };
+  // 1. 合并成绩记录
+  const mergedScores = mergeData<ScoreRecord>(rawLocalScores, rawRemoteScores);
 
-  const getScoreSignature = (sc: Partial<ScoreRecord>): string => {
-    const std = (sc.studentId || sc.studentName || '').trim();
-    const date = (sc.examDate || '').trim();
-    const lvl = (sc.level || '').trim();
-    const unit = (sc.unit || '').trim();
-    const title = (sc.examTitle || '').trim();
-    return `sig_${std}_${date}_${lvl}_${unit}_${title}`;
-  };
+  // 统计成绩变化
+  const localScoresMap = new Map(rawLocalScores.map(s => [s.id, s]));
+  const remoteScoresMap = new Map(rawRemoteScores.map(s => [s.id, s]));
 
-  const isClassDeleted = (c: ClassGroup): boolean => {
-    if (!c || (!c.id && !c.name)) return true;
-    const delTime = (c.id ? mergedDel.classes[c.id] : undefined) || (c.name ? mergedDel.classes[c.name] : undefined);
-    if (!delTime) return false;
-    const classTime = safeTime(c.updatedAt);
-    return classTime <= delTime;
-  };
-
-  const isStudentDeleted = (s: Student): boolean => {
-    if (!s || !s.id) return true;
-    const delTime = mergedDel.students[s.id] || (s.name ? mergedDel.students[s.name] : undefined);
-    if (!delTime) return false;
-    const stuTime = safeTime(s.updatedAt);
-    return stuTime <= delTime;
-  };
-
-  const isScoreDeleted = (sc: ScoreRecord): boolean => {
-    if (!sc || (!sc.id && !sc.studentId)) return true;
-    
-    // Check direct score deletion by ID or by test signature
-    const sig = getScoreSignature(sc);
-    const delTime = (sc.id ? mergedDel.scoreRecords[sc.id] : undefined) || mergedDel.scoreRecords[sig];
-    const recTime = getScoreRecordTime(sc);
-
-    if (delTime && recTime <= delTime) {
-      return true;
-    }
-
-    // Check if the student belonging to this score was deleted
-    if (sc.studentId && mergedDel.students[sc.studentId]) {
-      const studentDelTime = mergedDel.students[sc.studentId];
-      if (recTime <= studentDelTime) {
-        return true;
-      }
-    }
-
-    return false;
-  };
-
-  if (!remoteData || (!remoteData.scoreRecords && !remoteData.students && !remoteData.classes)) {
-    const filteredLocalScores = (Array.isArray(localData?.scoreRecords) ? localData.scoreRecords : []).filter((s: ScoreRecord) => !isScoreDeleted(s));
-    const filteredLocalStudents = (Array.isArray(localData?.students) ? localData.students : []).filter((s: Student) => !isStudentDeleted(s));
-    const filteredLocalClasses = (Array.isArray(localData?.classes) ? localData.classes : []).filter((c: ClassGroup) => !isClassDeleted(c));
-
-    return {
-      merged: {
-        ...localData,
-        classes: filteredLocalClasses,
-        students: filteredLocalStudents,
-        scoreRecords: filteredLocalScores,
-        deletedEntities: mergedDel,
-      },
-      report: {
-        ...report,
-        totalScoresCount: filteredLocalScores.length,
-        totalStudentsCount: filteredLocalStudents.length,
-        totalClassesCount: filteredLocalClasses.length,
-      },
-    };
-  }
-
-  // 1. Merge Score Records
-  const localScores: ScoreRecord[] = (Array.isArray(localData.scoreRecords) ? localData.scoreRecords : []).filter((s: ScoreRecord) => !isScoreDeleted(s));
-  const remoteScores: ScoreRecord[] = (Array.isArray(remoteData.scoreRecords) ? remoteData.scoreRecords : []).filter((s: ScoreRecord) => !isScoreDeleted(s));
-
-  const scoreMap = new Map<string, ScoreRecord>();
-
-  // Add all active local records first
-  for (const s of localScores) {
-    if (s && s.id && !isScoreDeleted(s)) {
-      scoreMap.set(s.id, s);
-    }
-  }
-
-  // Merge remote records
-  let newFromRemote = 0;
+  let newScoresFromRemote = 0;
   let incomingScoresUpdated = 0;
   let outgoingScoresUpdated = 0;
   const incomingScoreUpdates: ScoreUpdateDetail[] = [];
@@ -398,85 +365,58 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
     examDate?: string;
   }[] = [];
 
-  for (const r of remoteScores) {
-    if (!r || !r.id || isScoreDeleted(r)) continue;
+  for (const s of mergedScores) {
+    if (s.isDeleted) continue; // 仅统计活跃记录
 
-    if (!scoreMap.has(r.id)) {
-      scoreMap.set(r.id, r);
-      newFromRemote++;
+    const inLocal = localScoresMap.get(s.id);
+    const inRemote = remoteScoresMap.get(s.id);
+
+    if (!inLocal && inRemote && !inRemote.isDeleted) {
+      newScoresFromRemote++;
       if (incomingScoreSamples.length < 8) {
         incomingScoreSamples.push({
-          studentName: r.studentName || '未命名学员',
-          className: r.className || '未指定班级',
-          unit: r.unit || '阶段测验',
-          examTitle: r.examTitle || '测验',
-          score: typeof r.score === 'number' ? r.score : null,
-          level: r.level,
-          examDate: r.examDate
+          studentName: s.studentName || '未命名学员',
+          className: s.className || '未指定班级',
+          unit: s.unit || '阶段测验',
+          examTitle: s.examTitle || '测验',
+          score: typeof s.score === 'number' ? s.score : null,
+          level: s.level,
+          examDate: s.examDate
         });
       }
-    } else {
-      const existing = scoreMap.get(r.id)!;
-      const existingTime = Math.max(
-        existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0,
-        existing.recordedAt ? new Date(existing.recordedAt).getTime() : 0
-      );
-      const remoteTime = Math.max(
-        r.updatedAt ? new Date(r.updatedAt).getTime() : 0,
-        r.recordedAt ? new Date(r.recordedAt).getTime() : 0
-      );
-
-      const hasDiff = (existing.score !== r.score) || (existing.attendance !== r.attendance) || (existing.level !== r.level);
-
-      if (remoteTime > existingTime) {
-        scoreMap.set(r.id, r);
-        if (hasDiff) {
-          incomingScoresUpdated++;
-          if (incomingScoreUpdates.length < 10) {
-            incomingScoreUpdates.push({
-              scoreId: r.id,
-              studentName: r.studentName || existing.studentName,
-              className: r.className || existing.className,
-              unit: r.unit || existing.unit,
-              description: `成绩: ${existing.score ?? '待评'}分 → ${r.score ?? '待评'}分`
-            });
-          }
+    } else if (inLocal && inRemote && !inLocal.isDeleted && !inRemote.isDeleted) {
+      const lTime = Number(inLocal.updatedAt) || 0;
+      const rTime = Number(inRemote.updatedAt) || 0;
+      if (rTime > lTime && (inLocal.score !== inRemote.score || inLocal.attendance !== inRemote.attendance)) {
+        incomingScoresUpdated++;
+        if (incomingScoreUpdates.length < 10) {
+          incomingScoreUpdates.push({
+            scoreId: s.id,
+            studentName: s.studentName,
+            className: s.className,
+            unit: s.unit,
+            description: `成绩: ${inLocal.score ?? '待评'}分 → ${inRemote.score ?? '待评'}分`
+          });
         }
-      } else if (existingTime > remoteTime) {
-        scoreMap.set(r.id, existing);
-        if (hasDiff) {
-          outgoingScoresUpdated++;
-          if (outgoingScoreUpdates.length < 10) {
-            outgoingScoreUpdates.push({
-              scoreId: existing.id,
-              studentName: existing.studentName,
-              className: existing.className,
-              unit: existing.unit,
-              description: `成绩: ${r.score ?? '待评'}分 → ${existing.score ?? '待评'}分`
-            });
-          }
+      } else if (lTime > rTime && (inLocal.score !== inRemote.score || inLocal.attendance !== inRemote.attendance)) {
+        outgoingScoresUpdated++;
+        if (outgoingScoreUpdates.length < 10) {
+          outgoingScoreUpdates.push({
+            scoreId: s.id,
+            studentName: s.studentName,
+            className: s.className,
+            unit: s.unit,
+            description: `成绩: ${inRemote.score ?? '待评'}分 → ${inLocal.score ?? '待评'}分`
+          });
         }
-      } else {
-        const mergedWeakPoints = Array.from(new Set([...(existing.weakPoints || []), ...(r.weakPoints || [])]));
-        scoreMap.set(r.id, {
-          ...r,
-          ...existing,
-          weakPoints: mergedWeakPoints,
-          mistakeDetails: existing.mistakeDetails || r.mistakeDetails,
-          teacherRemark: existing.teacherRemark || r.teacherRemark,
-        });
       }
     }
   }
 
-  // 2. Merge Students with proper updatedAt timestamp & tombstone filtering
-  const localStudents: Student[] = (Array.isArray(localData.students) ? localData.students : []).filter((s: Student) => !isStudentDeleted(s));
-  const remoteStudents: Student[] = (Array.isArray(remoteData.students) ? remoteData.students : []).filter((s: Student) => !isStudentDeleted(s));
-
-  const studentMap = new Map<string, Student>();
-  for (const stu of localStudents) {
-    if (stu && stu.id && !isStudentDeleted(stu)) studentMap.set(stu.id, stu);
-  }
+  // 2. 合并学员列表
+  const mergedStudents = mergeData<Student>(rawLocalStudents, rawRemoteStudents);
+  const localStudentsMap = new Map(rawLocalStudents.map(s => [s.id, s]));
+  const remoteStudentsMap = new Map(rawRemoteStudents.map(s => [s.id, s]));
 
   let newStudentsFromRemote = 0;
   let incomingStudentsUpdated = 0;
@@ -485,107 +425,55 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
   const incomingStudentUpdates: StudentUpdateDetail[] = [];
   const outgoingStudentUpdates: StudentUpdateDetail[] = [];
 
-  for (const rStu of remoteStudents) {
-    if (!rStu || !rStu.id || isStudentDeleted(rStu)) continue;
-    if (!studentMap.has(rStu.id)) {
-      studentMap.set(rStu.id, rStu);
+  for (const stu of mergedStudents) {
+    if (stu.isDeleted) continue;
+
+    const inLocal = localStudentsMap.get(stu.id);
+    const inRemote = remoteStudentsMap.get(stu.id);
+
+    if (!inLocal && inRemote && !inRemote.isDeleted) {
       newStudentsFromRemote++;
-      if (rStu.name && incomingStudentNames.length < 10) {
-        incomingStudentNames.push(rStu.name);
+      if (stu.name && incomingStudentNames.length < 10) {
+        incomingStudentNames.push(stu.name);
       }
-    } else {
-      const existStu = studentMap.get(rStu.id)!;
-      const existTime = existStu.updatedAt ? new Date(existStu.updatedAt).getTime() : 0;
-      const remoteTime = rStu.updatedAt ? new Date(rStu.updatedAt).getTime() : 0;
+    } else if (inLocal && inRemote && !inLocal.isDeleted && !inRemote.isDeleted) {
+      const lTime = Number(inLocal.updatedAt) || 0;
+      const rTime = Number(inRemote.updatedAt) || 0;
+      const levelDiff = inLocal.currentLevel !== inRemote.currentLevel;
+      const classDiff = inLocal.classId !== inRemote.classId;
 
-      const levelChanged = existStu.currentLevel !== rStu.currentLevel;
-      const classChanged = existStu.classId !== rStu.classId;
-      const statusChanged = existStu.status !== rStu.status;
-      const hasStudentDiff = levelChanged || classChanged || statusChanged || existStu.name !== rStu.name;
-
-      if (remoteTime > existTime) {
-        studentMap.set(rStu.id, {
-          ...existStu,
-          ...rStu,
-          updatedAt: rStu.updatedAt || existStu.updatedAt,
-        });
-        if (hasStudentDiff) {
-          incomingStudentsUpdated++;
-          if (levelChanged) {
-            incomingStudentUpdates.push({
-              studentId: rStu.id,
-              studentName: rStu.name || existStu.name,
-              field: 'currentLevel',
-              from: existStu.currentLevel || '未定',
-              to: rStu.currentLevel || '未定',
-              description: `在读级别: ${existStu.currentLevel || '未定'} → ${rStu.currentLevel || '未定'}`
-            });
-          } else if (classChanged) {
-            incomingStudentUpdates.push({
-              studentId: rStu.id,
-              studentName: rStu.name || existStu.name,
-              field: 'classId',
-              from: existStu.classId,
-              to: rStu.classId,
-              description: '班级调动调整'
-            });
-          }
+      if (rTime > lTime && (levelDiff || classDiff)) {
+        incomingStudentsUpdated++;
+        if (levelDiff) {
+          incomingStudentUpdates.push({
+            studentId: stu.id,
+            studentName: stu.name,
+            field: 'currentLevel',
+            from: inLocal.currentLevel || '未定',
+            to: inRemote.currentLevel || '未定',
+            description: `在读级别: ${inLocal.currentLevel || '未定'} → ${inRemote.currentLevel || '未定'}`
+          });
         }
-      } else {
-        studentMap.set(rStu.id, {
-          ...rStu,
-          ...existStu,
-          name: existStu.name || rStu.name,
-          phone: existStu.phone !== undefined ? existStu.phone : rStu.phone,
-          parentContact: existStu.parentContact !== undefined ? existStu.parentContact : rStu.parentContact,
-          notes: existStu.notes !== undefined ? existStu.notes : rStu.notes,
-          classId: existStu.classId !== undefined ? existStu.classId : rStu.classId,
-          currentLevel: existStu.currentLevel || rStu.currentLevel,
-          schoolGrade: existStu.schoolGrade || rStu.schoolGrade,
-          studentNo: existStu.studentNo || rStu.studentNo,
-          status: existStu.status || rStu.status || 'active',
-          suspendedAt: existStu.suspendedAt !== undefined ? existStu.suspendedAt : rStu.suspendedAt,
-          suspendReason: existStu.suspendReason !== undefined ? existStu.suspendReason : rStu.suspendReason,
-          previousClassId: existStu.previousClassId !== undefined ? existStu.previousClassId : rStu.previousClassId,
-          updatedAt: existStu.updatedAt || rStu.updatedAt,
-        });
-        if (hasStudentDiff) {
-          outgoingStudentsUpdated++;
-          if (levelChanged) {
-            outgoingStudentUpdates.push({
-              studentId: existStu.id,
-              studentName: existStu.name,
-              field: 'currentLevel',
-              from: rStu.currentLevel || '未定',
-              to: existStu.currentLevel || '未定',
-              description: `在读级别: ${rStu.currentLevel || '未定'} → ${existStu.currentLevel || '未定'}`
-            });
-          } else if (classChanged) {
-            outgoingStudentUpdates.push({
-              studentId: existStu.id,
-              studentName: existStu.name,
-              field: 'classId',
-              from: rStu.classId,
-              to: existStu.classId,
-              description: '班级调动调整'
-            });
-          }
+      } else if (lTime > rTime && (levelDiff || classDiff)) {
+        outgoingStudentsUpdated++;
+        if (levelDiff) {
+          outgoingStudentUpdates.push({
+            studentId: stu.id,
+            studentName: stu.name,
+            field: 'currentLevel',
+            from: inRemote.currentLevel || '未定',
+            to: inLocal.currentLevel || '未定',
+            description: `在读级别: ${inRemote.currentLevel || '未定'} → ${inLocal.currentLevel || '未定'}`
+          });
         }
       }
     }
   }
-  const mergedStudents = Array.from(studentMap.values()).filter(s => !isStudentDeleted(s));
-  const newStudentsFromLocal = mergedStudents.filter(s => !remoteStudents.some(r => r.id === s.id)).length;
-  const outgoingStudentNames = mergedStudents.filter(s => !remoteStudents.some(r => r.id === s.id)).map(s => s.name).slice(0, 10);
 
-  // 3. Merge Classes
-  const localClasses: ClassGroup[] = (Array.isArray(localData.classes) ? localData.classes : []).filter((c: ClassGroup) => !isClassDeleted(c));
-  const remoteClasses: ClassGroup[] = (Array.isArray(remoteData.classes) ? remoteData.classes : []).filter((c: ClassGroup) => !isClassDeleted(c));
-
-  const classMap = new Map<string, ClassGroup>();
-  for (const c of localClasses) {
-    if (c && (c.id || c.name) && !isClassDeleted(c)) classMap.set(c.id || c.name, c);
-  }
+  // 3. 合并班级列表
+  const mergedClasses = mergeData<ClassGroup>(rawLocalClasses, rawRemoteClasses);
+  const localClassesMap = new Map(rawLocalClasses.map(c => [c.id, c]));
+  const remoteClassesMap = new Map(rawRemoteClasses.map(c => [c.id, c]));
 
   let newClassesFromRemote = 0;
   let incomingClassesUpdated = 0;
@@ -594,177 +482,101 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
   const incomingClassUpdates: ClassUpdateDetail[] = [];
   const outgoingClassUpdates: ClassUpdateDetail[] = [];
 
-  for (const rC of remoteClasses) {
-    if (!rC || (!rC.id && !rC.name) || isClassDeleted(rC)) continue;
-    const key = rC.id || rC.name;
-    if (!classMap.has(key)) {
-      classMap.set(key, rC);
+  for (const cls of mergedClasses) {
+    if (cls.isDeleted) continue;
+
+    const inLocal = localClassesMap.get(cls.id);
+    const inRemote = remoteClassesMap.get(cls.id);
+
+    if (!inLocal && inRemote && !inRemote.isDeleted) {
       newClassesFromRemote++;
-      if (rC.name && incomingClassNames.length < 10) {
-        incomingClassNames.push(rC.name);
+      if (cls.name && incomingClassNames.length < 10) {
+        incomingClassNames.push(cls.name);
       }
-    } else {
-      const existClass = classMap.get(key)!;
-      const existTime = existClass.updatedAt ? new Date(existClass.updatedAt).getTime() : 0;
-      const remoteTime = rC.updatedAt ? new Date(rC.updatedAt).getTime() : 0;
+    } else if (inLocal && inRemote && !inLocal.isDeleted && !inRemote.isDeleted) {
+      const lTime = Number(inLocal.updatedAt) || 0;
+      const rTime = Number(inRemote.updatedAt) || 0;
+      const levelDiff = (inLocal.currentLevel || inLocal.level) !== (inRemote.currentLevel || inRemote.level);
+      const teacherDiff = inLocal.teacherName !== inRemote.teacherName;
 
-      const levelDiff = (existClass.currentLevel || existClass.level) !== (rC.currentLevel || rC.level);
-      const teacherDiff = existClass.teacherName !== rC.teacherName;
-
-      if (remoteTime > existTime) {
-        classMap.set(key, {
-          ...existClass,
-          ...rC,
-          updatedAt: rC.updatedAt || existClass.updatedAt,
-        });
-        if (levelDiff || teacherDiff) {
-          incomingClassesUpdated++;
-          if (levelDiff) {
-            incomingClassUpdates.push({
-              classId: rC.id,
-              className: rC.name,
-              field: 'level',
-              from: existClass.currentLevel || existClass.level,
-              to: rC.currentLevel || rC.level,
-              description: `班级主授级别: ${existClass.currentLevel || existClass.level} → ${rC.currentLevel || rC.level}`
-            });
-          }
+      if (rTime > lTime && (levelDiff || teacherDiff)) {
+        incomingClassesUpdated++;
+        if (levelDiff) {
+          incomingClassUpdates.push({
+            classId: cls.id,
+            className: cls.name,
+            field: 'level',
+            from: inLocal.currentLevel || inLocal.level,
+            to: inRemote.currentLevel || inRemote.level,
+            description: `班级主授级别: ${inLocal.currentLevel || inLocal.level} → ${inRemote.currentLevel || inRemote.level}`
+          });
         }
-      } else {
-        classMap.set(key, {
-          ...rC,
-          ...existClass,
-          name: existClass.name || rC.name,
-          teacherName: existClass.teacherName || rC.teacherName,
-          level: existClass.level || rC.level,
-          updatedAt: existClass.updatedAt || rC.updatedAt,
-        });
-        if (levelDiff || teacherDiff) {
-          outgoingClassesUpdated++;
-          if (levelDiff) {
-            outgoingClassUpdates.push({
-              classId: existClass.id,
-              className: existClass.name,
-              field: 'level',
-              from: rC.currentLevel || rC.level,
-              to: existClass.currentLevel || existClass.level,
-              description: `班级主授级别: ${rC.currentLevel || rC.level} → ${existClass.currentLevel || existClass.level}`
-            });
-          }
-        }
+      } else if (lTime > rTime && (levelDiff || teacherDiff)) {
+        outgoingClassesUpdated++;
       }
     }
   }
-  const mergedClasses = Array.from(classMap.values()).filter(c => !isClassDeleted(c));
-  const newClassesFromLocal = mergedClasses.filter(c => !remoteClasses.some(r => (r.id && r.id === c.id) || (r.name && r.name === c.name))).length;
-  const outgoingClassNames = mergedClasses.filter(c => !remoteClasses.some(r => (r.id && r.id === c.id) || (r.name && r.name === c.name))).map(c => c.name).slice(0, 10);
 
-  // Secondary duplicate prevention & studentName / className synchronization
-  const mergedScoresList = Array.from(scoreMap.values()).filter(sc => !isScoreDeleted(sc));
-  const uniqueScores: ScoreRecord[] = [];
-  const contentDedupeMap = new Set<string>();
+  // 4. 合并字典与标签
+  const mergedLevels = Array.from(new Set([...(localData?.levels || []), ...(remoteData?.levels || [])].filter(Boolean)));
+  const mergedUnits = Array.from(new Set([...(localData?.units || []), ...(remoteData?.units || [])].filter(Boolean)));
+  const mergedTeachers = Array.from(new Set([...(localData?.teachers || []), ...(remoteData?.teachers || [])].filter(Boolean)));
 
-  for (const sc of mergedScoresList) {
-    const matchedStudent = studentMap.get(sc.studentId);
-    const matchedClass = classMap.get(sc.classId);
-    const normalizedSc: ScoreRecord = {
-      ...sc,
-      studentName: matchedStudent?.name || sc.studentName,
-      className: matchedClass?.name || sc.className,
-    };
-
-    const sig = `${normalizedSc.studentId || ''}_${normalizedSc.classId || ''}_${normalizedSc.examDate || ''}_${normalizedSc.unit || ''}_${normalizedSc.level || ''}_${normalizedSc.examTitle || ''}_${normalizedSc.score}_${normalizedSc.maxScore}`;
-    if (!contentDedupeMap.has(sig)) {
-      contentDedupeMap.add(sig);
-      uniqueScores.push(normalizedSc);
-    }
-  }
-
-  // 4. Merge Dictionaries (filter deleted)
-  const delLevels = mergedDel.levels || {};
-  const delUnits = mergedDel.units || {};
-  const delTeachers = mergedDel.teachers || {};
-
-  const mergedLevels = Array.from(
-    new Set([...(localData.levels || []), ...(remoteData.levels || [])].filter(l => Boolean(l) && !delLevels[l]))
-  );
-  const mergedUnits = Array.from(
-    new Set([...(localData.units || []), ...(remoteData.units || [])].filter(u => Boolean(u) && !delUnits[u]))
-  );
-  const mergedTeachers = Array.from(
-    new Set([...(localData.teachers || []), ...(remoteData.teachers || [])].filter(t => Boolean(t) && !delTeachers[t]))
-  );
-
-  // 5. Merge Weak Point Categories
-  const localCats: WeakPointTagCategory[] = Array.isArray(localData.weakPointCategories)
-    ? localData.weakPointCategories
-    : [];
-  const remoteCats: WeakPointTagCategory[] = Array.isArray(remoteData.weakPointCategories)
-    ? remoteData.weakPointCategories
-    : [];
-
+  const localCats: WeakPointTagCategory[] = Array.isArray(localData?.weakPointCategories) ? localData.weakPointCategories : [];
+  const remoteCats: WeakPointTagCategory[] = Array.isArray(remoteData?.weakPointCategories) ? remoteData.weakPointCategories : [];
   const catMap = new Map<string, string[]>();
   for (const c of localCats) {
-    if (c && c.category) {
-      catMap.set(c.category, Array.isArray(c.tags) ? [...c.tags] : []);
-    }
+    if (c && c.category) catMap.set(c.category, Array.isArray(c.tags) ? [...c.tags] : []);
   }
   for (const rC of remoteCats) {
     if (rC && rC.category) {
-      const existingTags = catMap.get(rC.category) || [];
-      const remoteTags = Array.isArray(rC.tags) ? rC.tags : [];
-      catMap.set(rC.category, Array.from(new Set([...existingTags, ...remoteTags])));
+      const existing = catMap.get(rC.category) || [];
+      catMap.set(rC.category, Array.from(new Set([...existing, ...(Array.isArray(rC.tags) ? rC.tags : [])])));
     }
   }
   const mergedWeakPointCategories: WeakPointTagCategory[] = Array.from(catMap.entries()).map(([category, tags]) => ({
     category,
-    tags,
+    tags
   }));
 
-  const newOutgoingCount = uniqueScores.filter(s => !remoteScores.some(r => r.id === s.id)).length;
+  // 计算活跃非删除数量
+  const activeScoresCount = mergedScores.filter(s => !s.isDeleted).length;
+  const activeStudentsCount = mergedStudents.filter(s => !s.isDeleted).length;
+  const activeClassesCount = mergedClasses.filter(c => !c.isDeleted).length;
 
-  const localLevelSet = new Set(localData.levels || []);
-  const newLevelsFromRemote = mergedLevels.filter(l => !localLevelSet.has(l));
-  const localUnitSet = new Set(localData.units || []);
-  const newUnitsFromRemote = mergedUnits.filter(u => !localUnitSet.has(u));
-  const localTeacherSet = new Set(localData.teachers || []);
-  const newTeachersFromRemote = mergedTeachers.filter(t => !localTeacherSet.has(t));
+  const newOutgoingScoresCount = mergedScores.filter(s => !s.isDeleted && !remoteScoresMap.has(s.id)).length;
+  const newOutgoingStudentsCount = mergedStudents.filter(s => !s.isDeleted && !remoteStudentsMap.has(s.id)).length;
+  const newOutgoingClassesCount = mergedClasses.filter(c => !c.isDeleted && !remoteClassesMap.has(c.id)).length;
 
-  report.incomingScoresCount = newFromRemote;
-  report.outgoingScoresCount = newOutgoingCount;
+  report.incomingScoresCount = newScoresFromRemote;
+  report.outgoingScoresCount = newOutgoingScoresCount;
   report.incomingScoresUpdated = incomingScoresUpdated;
   report.outgoingScoresUpdated = outgoingScoresUpdated;
-  report.totalScoresCount = uniqueScores.length;
+  report.totalScoresCount = activeScoresCount;
   report.incomingStudentsCount = newStudentsFromRemote;
-  report.outgoingStudentsCount = newStudentsFromLocal;
+  report.outgoingStudentsCount = newOutgoingStudentsCount;
   report.incomingStudentsUpdated = incomingStudentsUpdated;
   report.outgoingStudentsUpdated = outgoingStudentsUpdated;
-  report.totalStudentsCount = mergedStudents.length;
+  report.totalStudentsCount = activeStudentsCount;
   report.incomingClassesCount = newClassesFromRemote;
-  report.outgoingClassesCount = newClassesFromLocal;
+  report.outgoingClassesCount = newOutgoingClassesCount;
   report.incomingClassesUpdated = incomingClassesUpdated;
   report.outgoingClassesUpdated = outgoingClassesUpdated;
-  report.totalClassesCount = mergedClasses.length;
+  report.totalClassesCount = activeClassesCount;
   report.isMerged =
-    newFromRemote > 0 ||
-    newOutgoingCount > 0 ||
+    newScoresFromRemote > 0 ||
+    newOutgoingScoresCount > 0 ||
     incomingScoresUpdated > 0 ||
     outgoingScoresUpdated > 0 ||
     newStudentsFromRemote > 0 ||
-    newStudentsFromLocal > 0 ||
+    newOutgoingStudentsCount > 0 ||
     incomingStudentsUpdated > 0 ||
     outgoingStudentsUpdated > 0 ||
     newClassesFromRemote > 0 ||
-    newClassesFromLocal > 0 ||
-    incomingClassesUpdated > 0 ||
-    outgoingClassesUpdated > 0 ||
-    newLevelsFromRemote.length > 0 ||
-    newUnitsFromRemote.length > 0 ||
-    newTeachersFromRemote.length > 0;
+    newOutgoingClassesCount > 0 ||
+    incomingClassesUpdated > 0;
   report.incomingStudentNames = incomingStudentNames;
-  report.outgoingStudentNames = outgoingStudentNames;
   report.incomingClassNames = incomingClassNames;
-  report.outgoingClassNames = outgoingClassNames;
   report.incomingStudentUpdates = incomingStudentUpdates;
   report.outgoingStudentUpdates = outgoingStudentUpdates;
   report.incomingClassUpdates = incomingClassUpdates;
@@ -773,9 +585,9 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
   report.outgoingScoreUpdates = outgoingScoreUpdates;
   report.incomingScoreSamples = incomingScoreSamples;
   report.newDictionaries = {
-    levels: newLevelsFromRemote,
-    units: newUnitsFromRemote,
-    teachers: newTeachersFromRemote
+    levels: mergedLevels.filter(l => !(localData?.levels || []).includes(l)),
+    units: mergedUnits.filter(u => !(localData?.units || []).includes(u)),
+    teachers: mergedTeachers.filter(t => !(localData?.teachers || []).includes(t))
   };
 
   const mergedData = {
@@ -783,17 +595,16 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
     exportedAt: new Date().toISOString(),
     classes: mergedClasses,
     students: mergedStudents,
-    scoreRecords: uniqueScores,
+    scoreRecords: mergedScores,
     levels: mergedLevels,
     units: mergedUnits,
     teachers: mergedTeachers,
     weakPointCategories: mergedWeakPointCategories,
-    deletedEntities: mergedDel,
   };
 
   return {
     merged: mergedData,
-    report,
+    report
   };
 }
 
