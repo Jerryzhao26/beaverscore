@@ -1,0 +1,7 @@
+{
+  "name": "机构学生日常成绩管理与学情分析系统",
+  "description": "专为培训机构设计的学生日常成绩登记、存档归档、多维查询与进退步实时排行学情分析系统",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
