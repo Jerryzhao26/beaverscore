@@ -86,13 +86,37 @@ interface AppContextType {
 
   // Class Operations
   addClass: (cls: Omit<ClassGroup, 'id'>) => ClassGroup;
+  addClassAndSync: (
+    cls: Omit<ClassGroup, 'id'>,
+    options?: { teacherName?: string }
+  ) => Promise<{ success: boolean; message: string; mergeReport?: MergeReport }>;
   batchAddClasses: (classesList: Omit<ClassGroup, 'id'>[]) => ClassGroup[];
   updateClass: (id: string, cls: Partial<ClassGroup>, syncStudentsLevel?: boolean) => void;
+  updateClassAndSync: (
+    id: string,
+    cls: Partial<ClassGroup>,
+    syncStudentsLevel?: boolean,
+    options?: { teacherName?: string }
+  ) => Promise<{ success: boolean; message: string; mergeReport?: MergeReport; affectedStudentCount?: number }>;
   deleteClass: (id: string) => void;
 
   // Student Operations
   addStudent: (student: Omit<Student, 'id'>) => Student;
+  addStudentAndSync: (
+    student: Omit<Student, 'id'>,
+    options?: { teacherName?: string }
+  ) => Promise<{ success: boolean; message: string; mergeReport?: MergeReport }>;
   updateStudent: (id: string, student: Partial<Student>) => void;
+  updateStudentAndSync: (
+    id: string,
+    student: Partial<Student>,
+    options?: { teacherName?: string }
+  ) => Promise<{ success: boolean; message: string; mergeReport?: MergeReport }>;
+  batchUpdateStudentsLevelAndSync: (
+    studentIds: string[],
+    newLevel: string,
+    options?: { teacherName?: string }
+  ) => Promise<{ success: boolean; message: string; mergeReport?: MergeReport }>;
   deleteStudent: (id: string) => void;
   batchAddStudents: (students: Omit<Student, 'id'>[]) => void;
   batchDeleteStudents: (studentIds: string[]) => void;
@@ -1143,6 +1167,289 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const updateClassAndSync = async (
+    id: string,
+    updated: Partial<ClassGroup>,
+    syncStudentsLevel: boolean = true,
+    options?: { teacherName?: string }
+  ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport; affectedStudentCount?: number }> => {
+    const nowIso = new Date().toISOString();
+    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+
+    const prevClass = classes.find(c => c.id === id);
+    const oldLevel = prevClass?.currentLevel || prevClass?.level || 'BF1';
+    const newLevel = updated.currentLevel || updated.level || oldLevel;
+    const levelChanged = oldLevel.trim().toUpperCase() !== newLevel.trim().toUpperCase();
+    const oldName = prevClass?.name || '未知班级';
+    const newName = updated.name ? updated.name.trim() : oldName;
+
+    // 1. Calculate affected students & outgoing updates
+    const affectedStudents = students.filter(s => s.classId === id);
+    const outgoingStudentUpdates: { studentId: string; studentName: string; field: string; from?: string; to?: string; description: string }[] = [];
+
+    if (newLevel && syncStudentsLevel) {
+      affectedStudents.forEach(s => {
+        const sOldLvl = s.currentLevel || oldLevel;
+        if (sOldLvl.trim().toUpperCase() !== newLevel.trim().toUpperCase()) {
+          outgoingStudentUpdates.push({
+            studentId: s.id,
+            studentName: s.name,
+            field: 'currentLevel',
+            from: sOldLvl,
+            to: newLevel,
+            description: `在读级别联动更新: ${sOldLvl} → ${newLevel}`
+          });
+        }
+      });
+    }
+
+    const outgoingClassUpdates = [
+      {
+        classId: id,
+        className: newName,
+        field: 'level',
+        from: oldLevel,
+        to: newLevel,
+        description: levelChanged
+          ? `班级主授级别调整: ${oldLevel} → ${newLevel}`
+          : `班级设置信息更新`
+      }
+    ];
+
+    // 2. Perform local update immediately
+    const nextClasses = classes.map(c => {
+      if (c.id === id) {
+        return {
+          ...c,
+          ...updated,
+          name: newName,
+          level: newLevel,
+          currentLevel: newLevel,
+          updatedAt: nowIso
+        };
+      }
+      return c;
+    });
+    setClasses(nextClasses);
+    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
+
+    let nextStudents = students;
+    if (newLevel && syncStudentsLevel) {
+      nextStudents = students.map(s => {
+        if (s.classId === id) {
+          return {
+            ...s,
+            currentLevel: newLevel,
+            updatedAt: nowIso
+          };
+        }
+        return s;
+      });
+      setStudents(nextStudents);
+      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+    }
+
+    let nextRecords = scoreRecords;
+    if (updated.name && updated.name !== oldName) {
+      nextRecords = scoreRecords.map(r =>
+        r.classId === id ? { ...r, className: updated.name!, updatedAt: nowIso } : r
+      );
+      setScoreRecords(nextRecords);
+      localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
+    }
+
+    const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
+
+    if (!isCloudReady) {
+      const msg = `✅ 班级【${newName}】已保存至本地${levelChanged ? `，并联动更新了该班 ${outgoingStudentUpdates.length} 位学员的在读级别` : ''}`;
+      showSyncNotification({
+        id: `sync_class_local_${Date.now()}`,
+        type: 'info',
+        action: 'save_and_push',
+        title: '班级与学员级别已在本地更新',
+        message: `${msg}。如需跨设备同步给其他老师，请前往【Gist云同步协作】配置 GitHub Token 与 Gist ID。`,
+        timestamp: new Date().toLocaleTimeString('zh-CN'),
+        teacherName: operatorTeacher,
+        outgoingStudentsUpdated: outgoingStudentUpdates.length,
+        outgoingClassesUpdated: 1,
+        outgoingStudentUpdates,
+        outgoingClassUpdates,
+        totalStudentsCount: nextStudents.length,
+        totalClassesCount: nextClasses.length,
+        totalScoresCount: nextRecords.length
+      });
+
+      return {
+        success: true,
+        message: msg,
+        affectedStudentCount: affectedStudents.length
+      };
+    }
+
+    // 3. Perform Cloud Sync & Smart Merge
+    setIsSyncingGist(true);
+    setGistLastMessage(`正在将班级【${newName}】${levelChanged ? `及 ${outgoingStudentUpdates.length} 位学员新级别` : ''}加密同步至云端...`);
+
+    try {
+      const fullLocalData = {
+        version: '2.0',
+        exportedAt: nowIso,
+        classes: nextClasses,
+        students: nextStudents,
+        scoreRecords: nextRecords,
+        levels,
+        units,
+        teachers,
+        weakPointCategories,
+        deletedEntities
+      };
+
+      const res = await pushDataToGistWithSmartMerge(
+        gistConfig.token,
+        gistConfig.gistId,
+        fullLocalData,
+        gistConfig.filename || DEFAULT_GIST_FILENAME
+      );
+
+      if (res.success) {
+        if (res.data) {
+          applyMergedData(res.data);
+        }
+        if (res.report) {
+          setLatestMergeReport(res.report);
+        }
+        updateGistConfig({
+          lastSyncedAt: nowIso
+        });
+
+        const incomingScores = res.report?.incomingScoresCount || 0;
+        const incomingStudents = res.report?.incomingStudentsCount || 0;
+        const successMsg = `✅ 班级【${newName}】与学员在读级别已成功同步至云端！`;
+        setGistLastMessage(successMsg);
+
+        addSyncLog({
+          type: 'save_and_push',
+          success: true,
+          message: `班级【${newName}】级别设为【${newLevel}】，联动更新 ${outgoingStudentUpdates.length} 位学员在读级别并同步推送到云端`,
+          operatorTeacher,
+          incomingCount: incomingScores,
+          totalRecordsCount: res.data?.scoreRecords?.length || nextRecords.length
+        });
+
+        showSyncNotification({
+          id: `sync_class_push_${Date.now()}`,
+          type: 'success',
+          action: 'save_and_push',
+          title: levelChanged
+            ? `班级主授级别已调整并同步更新 ${outgoingStudentUpdates.length} 位学员在读级别`
+            : `班级设置已保存并同步至云端 Gist`,
+          message: levelChanged
+            ? `班级【${newName}】主授级别已设为【${newLevel}】，已批量联动更新全班 ${outgoingStudentUpdates.length} 位学员在读级别，并成功加密上传至云端 Gist！`
+            : `班级【${newName}】信息已成功保存并实时同步至云端。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          outgoingStudentsUpdated: outgoingStudentUpdates.length,
+          outgoingClassesUpdated: 1,
+          outgoingStudentUpdates,
+          outgoingClassUpdates,
+          totalStudentsCount: res.data?.students?.length || nextStudents.length,
+          totalClassesCount: res.data?.classes?.length || nextClasses.length,
+          totalScoresCount: res.data?.scoreRecords?.length || nextRecords.length,
+          incomingScoresCount: incomingScores,
+          incomingStudentsCount: incomingStudents,
+          incomingStudentUpdates: res.report?.incomingStudentUpdates,
+          incomingScoreSamples: res.report?.incomingScoreSamples,
+          newDictionaries: res.report?.newDictionaries
+        });
+
+        return {
+          success: true,
+          message: successMsg,
+          mergeReport: res.report,
+          affectedStudentCount: affectedStudents.length
+        };
+      } else {
+        const errMsg = `⚠️ 班级和学员级别已在本地保存，但云端同步失败: ${res.message}`;
+        setGistLastMessage(errMsg);
+
+        showSyncNotification({
+          id: `sync_class_err_${Date.now()}`,
+          type: 'error',
+          action: 'save_and_push',
+          title: '云端同步异常 (本地数据已保存)',
+          message: `班级与学员级别已在当前电脑保存成功，但上传云端时提示: ${res.message}。请检查 GitHub Token 与网络连接后重试。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          outgoingStudentsUpdated: outgoingStudentUpdates.length,
+          outgoingClassesUpdated: 1,
+          outgoingStudentUpdates,
+          outgoingClassUpdates,
+          totalStudentsCount: nextStudents.length,
+          totalClassesCount: nextClasses.length,
+          totalScoresCount: nextRecords.length
+        });
+
+        return {
+          success: false,
+          message: errMsg,
+          affectedStudentCount: affectedStudents.length
+        };
+      }
+    } catch (err: any) {
+      const errMsg = `⚠️ 已保存在本地，云端上传异常: ${err?.message || '网络连接超时'}`;
+      setGistLastMessage(errMsg);
+      return {
+        success: false,
+        message: errMsg,
+        affectedStudentCount: affectedStudents.length
+      };
+    } finally {
+      setIsSyncingGist(false);
+    }
+  };
+
+  const addClassAndSync = async (
+    cls: Omit<ClassGroup, 'id'>,
+    options?: { teacherName?: string }
+  ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
+    const created = addClass(cls);
+    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+
+    if (!gistConfig.token || !gistConfig.gistId) {
+      return {
+        success: true,
+        message: `已创建班级【${created.name}】（本地保存）`
+      };
+    }
+
+    const pushRes = await pushToGist();
+    if (pushRes.success) {
+      showSyncNotification({
+        id: `sync_add_class_${Date.now()}`,
+        type: 'success',
+        action: 'save_and_push',
+        title: `新班级【${created.name}】已创建并同步云端`,
+        message: `班级【${created.name}】（主授级别: ${created.currentLevel || created.level}）已成功创建并同步至云端 Gist。`,
+        timestamp: new Date().toLocaleTimeString('zh-CN'),
+        teacherName: operatorTeacher,
+        gistId: gistConfig.gistId,
+        outgoingClassesCount: 1,
+        outgoingClassesUpdated: 1,
+        totalClassesCount: classes.length + 1,
+        totalStudentsCount: students.length,
+        totalScoresCount: scoreRecords.length
+      });
+    }
+
+    return {
+      success: pushRes.success,
+      message: pushRes.message,
+      mergeReport: pushRes.report
+    };
+  };
+
   const deleteClass = (id: string) => {
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
@@ -1179,6 +1486,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return newStudent;
   };
 
+  const addStudentAndSync = async (
+    student: Omit<Student, 'id'>,
+    options?: { teacherName?: string }
+  ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
+    const created = addStudent(student);
+    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+
+    if (!gistConfig.token || !gistConfig.gistId) {
+      return {
+        success: true,
+        message: `已添加学员【${created.name}】（本地保存）`
+      };
+    }
+
+    const pushRes = await pushToGist();
+    if (pushRes.success) {
+      showSyncNotification({
+        id: `sync_add_student_${Date.now()}`,
+        type: 'success',
+        action: 'save_and_push',
+        title: `学员【${created.name}】已建档并同步云端`,
+        message: `学员【${created.name}】（级别: ${created.currentLevel}）已成功注册入库并同步至云端 Gist。`,
+        timestamp: new Date().toLocaleTimeString('zh-CN'),
+        teacherName: operatorTeacher,
+        gistId: gistConfig.gistId,
+        outgoingStudentsCount: 1,
+        totalStudentsCount: students.length + 1,
+        totalClassesCount: classes.length,
+        totalScoresCount: scoreRecords.length
+      });
+    }
+
+    return {
+      success: pushRes.success,
+      message: pushRes.message,
+      mergeReport: pushRes.report
+    };
+  };
+
   const updateStudent = (id: string, updated: Partial<Student>) => {
     const nowIso = new Date().toISOString();
     setStudents(prev =>
@@ -1188,6 +1534,355 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setScoreRecords(prev =>
         prev.map(r => (r.studentId === id ? { ...r, studentName: updated.name!, updatedAt: nowIso } : r))
       );
+    }
+  };
+
+  const updateStudentAndSync = async (
+    id: string,
+    updated: Partial<Student>,
+    options?: { teacherName?: string }
+  ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
+    const nowIso = new Date().toISOString();
+    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+
+    const prevStudent = students.find(s => s.id === id);
+    const oldLevel = prevStudent?.currentLevel || 'BF1';
+    const newLevel = updated.currentLevel || oldLevel;
+    const levelChanged = oldLevel.trim().toUpperCase() !== newLevel.trim().toUpperCase();
+    const studentName = updated.name ? updated.name.trim() : (prevStudent?.name || '学员');
+
+    const outgoingStudentUpdates = [
+      {
+        studentId: id,
+        studentName,
+        field: 'currentLevel',
+        from: oldLevel,
+        to: newLevel,
+        description: levelChanged
+          ? `在读级别调整: ${oldLevel} → ${newLevel}`
+          : `学员档案信息更新`
+      }
+    ];
+
+    const nextStudents = students.map(s =>
+      s.id === id ? { ...s, ...updated, currentLevel: newLevel, updatedAt: nowIso } : s
+    );
+    setStudents(nextStudents);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+
+    let nextRecords = scoreRecords;
+    if (updated.name && updated.name !== prevStudent?.name) {
+      nextRecords = scoreRecords.map(r =>
+        r.studentId === id ? { ...r, studentName: updated.name!, updatedAt: nowIso } : r
+      );
+      setScoreRecords(nextRecords);
+      localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
+    }
+
+    const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
+
+    if (!isCloudReady) {
+      const msg = `✅ 学员【${studentName}】档案已保存至本地${levelChanged ? `（在读级别: ${oldLevel} → ${newLevel}）` : ''}`;
+      showSyncNotification({
+        id: `sync_student_local_${Date.now()}`,
+        type: 'info',
+        action: 'save_and_push',
+        title: '学员档案已在本地更新',
+        message: `${msg}。如需跨设备同步给其他老师，请前往【Gist云同步协作】配置 GitHub Token 与 Gist ID。`,
+        timestamp: new Date().toLocaleTimeString('zh-CN'),
+        teacherName: operatorTeacher,
+        outgoingStudentsUpdated: 1,
+        outgoingStudentUpdates,
+        totalStudentsCount: nextStudents.length,
+        totalClassesCount: classes.length,
+        totalScoresCount: nextRecords.length
+      });
+
+      return {
+        success: true,
+        message: msg
+      };
+    }
+
+    setIsSyncingGist(true);
+    setGistLastMessage(`正在将学员【${studentName}】最新档案${levelChanged ? `（在读级别: ${newLevel}）` : ''}同步至云端...`);
+
+    try {
+      const fullLocalData = {
+        version: '2.0',
+        exportedAt: nowIso,
+        classes,
+        students: nextStudents,
+        scoreRecords: nextRecords,
+        levels,
+        units,
+        teachers,
+        weakPointCategories,
+        deletedEntities
+      };
+
+      const res = await pushDataToGistWithSmartMerge(
+        gistConfig.token,
+        gistConfig.gistId,
+        fullLocalData,
+        gistConfig.filename || DEFAULT_GIST_FILENAME
+      );
+
+      if (res.success) {
+        if (res.data) {
+          applyMergedData(res.data);
+        }
+        if (res.report) {
+          setLatestMergeReport(res.report);
+        }
+        updateGistConfig({
+          lastSyncedAt: nowIso
+        });
+
+        const successMsg = `✅ 学员【${studentName}】档案及级别已成功同步至云端！`;
+        setGistLastMessage(successMsg);
+
+        addSyncLog({
+          type: 'save_and_push',
+          success: true,
+          message: `学员【${studentName}】档案更新（级别: ${newLevel}）并已同步至云端`,
+          operatorTeacher,
+          totalRecordsCount: res.data?.scoreRecords?.length || nextRecords.length
+        });
+
+        showSyncNotification({
+          id: `sync_student_push_${Date.now()}`,
+          type: 'success',
+          action: 'save_and_push',
+          title: levelChanged
+            ? `学员【${studentName}】在读级别已调整为【${newLevel}】并同步云端`
+            : `学员【${studentName}】档案已保存并同步至云端`,
+          message: levelChanged
+            ? `学员【${studentName}】在读级别由【${oldLevel}】调整为【${newLevel}】，已成功更新并加密同步至云端 Gist！`
+            : `学员【${studentName}】档案信息已成功保存并实时同步至云端。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          outgoingStudentsUpdated: 1,
+          outgoingStudentUpdates,
+          totalStudentsCount: res.data?.students?.length || nextStudents.length,
+          totalClassesCount: res.data?.classes?.length || classes.length,
+          totalScoresCount: res.data?.scoreRecords?.length || nextRecords.length,
+          incomingScoresCount: res.report?.incomingScoresCount || 0,
+          incomingStudentsCount: res.report?.incomingStudentsCount || 0,
+          incomingStudentUpdates: res.report?.incomingStudentUpdates,
+          incomingScoreSamples: res.report?.incomingScoreSamples
+        });
+
+        return {
+          success: true,
+          message: successMsg,
+          mergeReport: res.report
+        };
+      } else {
+        const errMsg = `⚠️ 学员档案已在本地保存，但云端同步失败: ${res.message}`;
+        setGistLastMessage(errMsg);
+
+        showSyncNotification({
+          id: `sync_student_err_${Date.now()}`,
+          type: 'error',
+          action: 'save_and_push',
+          title: '云端同步异常 (本地数据已保存)',
+          message: `学员档案已在当前电脑保存成功，但上传云端时提示: ${res.message}。请检查 GitHub Token 与网络连接后重试。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          outgoingStudentsUpdated: 1,
+          outgoingStudentUpdates,
+          totalStudentsCount: nextStudents.length,
+          totalClassesCount: classes.length,
+          totalScoresCount: nextRecords.length
+        });
+
+        return {
+          success: false,
+          message: errMsg
+        };
+      }
+    } catch (err: any) {
+      const errMsg = `⚠️ 已保存在本地，云端上传异常: ${err?.message || '网络连接超时'}`;
+      setGistLastMessage(errMsg);
+      return {
+        success: false,
+        message: errMsg
+      };
+    } finally {
+      setIsSyncingGist(false);
+    }
+  };
+
+  const batchUpdateStudentsLevelAndSync = async (
+    studentIds: string[],
+    newLevel: string,
+    options?: { teacherName?: string }
+  ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
+    if (!studentIds || studentIds.length === 0) {
+      return { success: false, message: '请选择需要调整级别的学员' };
+    }
+
+    const nowIso = new Date().toISOString();
+    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+
+    const outgoingStudentUpdates: { studentId: string; studentName: string; field: string; from?: string; to?: string; description: string }[] = [];
+
+    const nextStudents = students.map(s => {
+      if (studentIds.includes(s.id)) {
+        const oldLvl = s.currentLevel || 'BF1';
+        outgoingStudentUpdates.push({
+          studentId: s.id,
+          studentName: s.name,
+          field: 'currentLevel',
+          from: oldLvl,
+          to: newLevel,
+          description: `在读级别批量调整: ${oldLvl} → ${newLevel}`
+        });
+        return {
+          ...s,
+          currentLevel: newLevel,
+          updatedAt: nowIso
+        };
+      }
+      return s;
+    });
+
+    setStudents(nextStudents);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+
+    const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
+
+    if (!isCloudReady) {
+      const msg = `✅ 已批量将 ${outgoingStudentUpdates.length} 位学员在读级别调整为【${newLevel}】（本地保存）`;
+      showSyncNotification({
+        id: `sync_batch_level_local_${Date.now()}`,
+        type: 'info',
+        action: 'save_and_push',
+        title: `批量调级已在本地更新 (${outgoingStudentUpdates.length} 位学员)`,
+        message: `${msg}。如需跨设备同步给其他老师，请前往【Gist云同步协作】配置 GitHub Token 与 Gist ID。`,
+        timestamp: new Date().toLocaleTimeString('zh-CN'),
+        teacherName: operatorTeacher,
+        outgoingStudentsUpdated: outgoingStudentUpdates.length,
+        outgoingStudentUpdates,
+        totalStudentsCount: nextStudents.length,
+        totalClassesCount: classes.length,
+        totalScoresCount: scoreRecords.length
+      });
+
+      return {
+        success: true,
+        message: msg
+      };
+    }
+
+    setIsSyncingGist(true);
+    setGistLastMessage(`正在将 ${outgoingStudentUpdates.length} 位学员的新级别【${newLevel}】同步至云端...`);
+
+    try {
+      const fullLocalData = {
+        version: '2.0',
+        exportedAt: nowIso,
+        classes,
+        students: nextStudents,
+        scoreRecords,
+        levels,
+        units,
+        teachers,
+        weakPointCategories,
+        deletedEntities
+      };
+
+      const res = await pushDataToGistWithSmartMerge(
+        gistConfig.token,
+        gistConfig.gistId,
+        fullLocalData,
+        gistConfig.filename || DEFAULT_GIST_FILENAME
+      );
+
+      if (res.success) {
+        if (res.data) {
+          applyMergedData(res.data);
+        }
+        if (res.report) {
+          setLatestMergeReport(res.report);
+        }
+        updateGistConfig({
+          lastSyncedAt: nowIso
+        });
+
+        const successMsg = `✅ 已成功批量更新 ${outgoingStudentUpdates.length} 位学员在读级别为【${newLevel}】并同步至云端！`;
+        setGistLastMessage(successMsg);
+
+        addSyncLog({
+          type: 'save_and_push',
+          success: true,
+          message: `批量将 ${outgoingStudentUpdates.length} 位学员在读级别调整为【${newLevel}】并同步云端`,
+          operatorTeacher,
+          totalRecordsCount: res.data?.scoreRecords?.length || scoreRecords.length
+        });
+
+        showSyncNotification({
+          id: `sync_batch_level_push_${Date.now()}`,
+          type: 'success',
+          action: 'save_and_push',
+          title: `已批量调整 ${outgoingStudentUpdates.length} 位学员在读级别为【${newLevel}】并同步云端`,
+          message: `已批量调整 ${outgoingStudentUpdates.length} 位学员的在读级别为【${newLevel}】，并成功加密上传至云端 Gist！`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          outgoingStudentsUpdated: outgoingStudentUpdates.length,
+          outgoingStudentUpdates,
+          totalStudentsCount: res.data?.students?.length || nextStudents.length,
+          totalClassesCount: res.data?.classes?.length || classes.length,
+          totalScoresCount: res.data?.scoreRecords?.length || scoreRecords.length,
+          incomingScoresCount: res.report?.incomingScoresCount || 0,
+          incomingStudentsCount: res.report?.incomingStudentsCount || 0,
+          incomingStudentUpdates: res.report?.incomingStudentUpdates,
+          incomingScoreSamples: res.report?.incomingScoreSamples
+        });
+
+        return {
+          success: true,
+          message: successMsg,
+          mergeReport: res.report
+        };
+      } else {
+        const errMsg = `⚠️ 学员级别已在本地修改，但云端同步失败: ${res.message}`;
+        setGistLastMessage(errMsg);
+
+        showSyncNotification({
+          id: `sync_batch_err_${Date.now()}`,
+          type: 'error',
+          action: 'save_and_push',
+          title: '云端同步异常 (本地数据已保存)',
+          message: `已在本地修改 ${outgoingStudentUpdates.length} 位学员在读级别，但上传云端时提示: ${res.message}。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          outgoingStudentsUpdated: outgoingStudentUpdates.length,
+          outgoingStudentUpdates,
+          totalStudentsCount: nextStudents.length,
+          totalClassesCount: classes.length,
+          totalScoresCount: scoreRecords.length
+        });
+
+        return {
+          success: false,
+          message: errMsg
+        };
+      }
+    } catch (err: any) {
+      const errMsg = `⚠️ 已保存在本地，云端上传异常: ${err?.message || '网络连接超时'}`;
+      setGistLastMessage(errMsg);
+      return {
+        success: false,
+        message: errMsg
+      };
+    } finally {
+      setIsSyncingGist(false);
     }
   };
 
@@ -1629,11 +2324,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteScoreRecord,
         deleteScoreBatch,
         addClass,
+        addClassAndSync,
         batchAddClasses,
         updateClass,
+        updateClassAndSync,
         deleteClass,
         addStudent,
+        addStudentAndSync,
         updateStudent,
+        updateStudentAndSync,
+        batchUpdateStudentsLevelAndSync,
         deleteStudent,
         batchAddStudents,
         batchDeleteStudents,
