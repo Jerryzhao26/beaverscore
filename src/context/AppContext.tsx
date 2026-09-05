@@ -391,6 +391,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const isInitialMountRef = useRef<boolean>(true);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Active database state mirrors in refs to guarantee immediate freshness during async operations
+  const rawClassesRef = useRef<ClassGroup[]>(rawClasses);
+  const rawStudentsRef = useRef<Student[]>(rawStudents);
+  const rawScoreRecordsRef = useRef<ScoreRecord[]>(rawScoreRecords);
+  const levelsRef = useRef<string[]>(levels);
+  const unitsRef = useRef<string[]>(units);
+  const teachersRef = useRef<string[]>(teachers);
+  const weakPointCategoriesRef = useRef<WeakPointTagCategory[]>(weakPointCategories);
+  const deletedEntitiesRef = useRef<typeof deletedEntities>(deletedEntities);
+  const dictionaryAddedAtRef = useRef<typeof dictionaryAddedAt>(dictionaryAddedAt);
+
+  // Keep refs synchronized with state
+  useEffect(() => { rawClassesRef.current = rawClasses; }, [rawClasses]);
+  useEffect(() => { rawStudentsRef.current = rawStudents; }, [rawStudents]);
+  useEffect(() => { rawScoreRecordsRef.current = rawScoreRecords; }, [rawScoreRecords]);
+  useEffect(() => { levelsRef.current = levels; }, [levels]);
+  useEffect(() => { unitsRef.current = units; }, [units]);
+  useEffect(() => { teachersRef.current = teachers; }, [teachers]);
+  useEffect(() => { weakPointCategoriesRef.current = weakPointCategories; }, [weakPointCategories]);
+  useEffect(() => { deletedEntitiesRef.current = deletedEntities; }, [deletedEntities]);
+  useEffect(() => { dictionaryAddedAtRef.current = dictionaryAddedAt; }, [dictionaryAddedAt]);
+
   const updateGistConfig = (cfg: Partial<GistConfig>) => {
     setGistConfig(prev => {
       const updated = { ...prev, ...cfg };
@@ -407,15 +429,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return {
       version: '2.0',
       exportedAt: new Date().toISOString(),
-      classes: rawClasses,
-      students: rawStudents,
-      scoreRecords: rawScoreRecords,
-      levels,
-      units,
-      teachers,
-      weakPointCategories,
-      deletedEntities,
-      dictionaryAddedAt,
+      classes: rawClassesRef.current,
+      students: rawStudentsRef.current,
+      scoreRecords: rawScoreRecordsRef.current,
+      levels: levelsRef.current,
+      units: unitsRef.current,
+      teachers: teachersRef.current,
+      weakPointCategories: weakPointCategoriesRef.current,
+      deletedEntities: deletedEntitiesRef.current,
+      dictionaryAddedAt: dictionaryAddedAtRef.current,
     };
   };
 
@@ -423,42 +445,68 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!data) return;
 
     if (Array.isArray(data.classes)) {
-      setRawClasses(data.classes.map(normalizeClass));
+      const normalized = data.classes.map(normalizeClass);
+      rawClassesRef.current = normalized;
+      setRawClasses(normalized);
+      localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(normalized));
     }
     if (Array.isArray(data.students)) {
-      setRawStudents(data.students.map(normalizeStudent));
+      const normalized = data.students.map(normalizeStudent);
+      rawStudentsRef.current = normalized;
+      setRawStudents(normalized);
+      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.scoreRecords)) {
-      setRawScoreRecords(data.scoreRecords.map(normalizeScore));
+      const normalized = data.scoreRecords.map(normalizeScore);
+      rawScoreRecordsRef.current = normalized;
+      setRawScoreRecords(normalized);
+      localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.levels)) {
-      setLevels(Array.from(new Set(data.levels.filter(Boolean))));
+      const normalized = Array.from(new Set(data.levels.filter(Boolean)));
+      levelsRef.current = normalized;
+      setLevels(normalized);
+      localStorage.setItem(STORAGE_KEYS.LEVELS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.units)) {
-      setUnits(Array.from(new Set(data.units.filter(Boolean))));
+      const normalized = Array.from(new Set(data.units.filter(Boolean)));
+      unitsRef.current = normalized;
+      setUnits(normalized);
+      localStorage.setItem(STORAGE_KEYS.UNITS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.teachers)) {
-      setTeachers(Array.from(new Set(data.teachers.filter(Boolean))));
+      const normalized = Array.from(new Set(data.teachers.filter(Boolean)));
+      teachersRef.current = normalized;
+      setTeachers(normalized);
+      localStorage.setItem(STORAGE_KEYS.TEACHERS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.weakPointCategories)) {
+      weakPointCategoriesRef.current = data.weakPointCategories;
       setWeakPointCategories(data.weakPointCategories);
+      localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(data.weakPointCategories));
     }
     if (data.deletedEntities && typeof data.deletedEntities === 'object') {
-      setDeletedEntities(prev => ({
-        levels: { ...prev.levels, ...(data.deletedEntities.levels || {}) },
-        units: { ...prev.units, ...(data.deletedEntities.units || {}) },
-        teachers: { ...prev.teachers, ...(data.deletedEntities.teachers || {}) },
-        tags: { ...prev.tags, ...(data.deletedEntities.tags || {}) },
-        weakPointCategories: { ...prev.weakPointCategories, ...(data.deletedEntities.weakPointCategories || {}) },
-      }));
+      const nextDeleted = {
+        levels: { ...(deletedEntitiesRef.current.levels || {}), ...(data.deletedEntities.levels || {}) },
+        units: { ...(deletedEntitiesRef.current.units || {}), ...(data.deletedEntities.units || {}) },
+        teachers: { ...(deletedEntitiesRef.current.teachers || {}), ...(data.deletedEntities.teachers || {}) },
+        tags: { ...(deletedEntitiesRef.current.tags || {}), ...(data.deletedEntities.tags || {}) },
+        weakPointCategories: { ...(deletedEntitiesRef.current.weakPointCategories || {}), ...(data.deletedEntities.weakPointCategories || {}) },
+      };
+      deletedEntitiesRef.current = nextDeleted;
+      setDeletedEntities(nextDeleted);
+      localStorage.setItem(STORAGE_KEYS.DELETED_ENTITIES, JSON.stringify(nextDeleted));
     }
     if (data.dictionaryAddedAt && typeof data.dictionaryAddedAt === 'object') {
-      setDictionaryAddedAt(prev => ({
-        levels: { ...prev.levels, ...(data.dictionaryAddedAt.levels || {}) },
-        units: { ...prev.units, ...(data.dictionaryAddedAt.units || {}) },
-        teachers: { ...prev.teachers, ...(data.dictionaryAddedAt.teachers || {}) },
-        tags: { ...prev.tags, ...(data.dictionaryAddedAt.tags || {}) },
-      }));
+      const nextAdded = {
+        levels: { ...(dictionaryAddedAtRef.current.levels || {}), ...(data.dictionaryAddedAt.levels || {}) },
+        units: { ...(dictionaryAddedAtRef.current.units || {}), ...(data.dictionaryAddedAt.units || {}) },
+        teachers: { ...(dictionaryAddedAtRef.current.teachers || {}), ...(data.dictionaryAddedAt.teachers || {}) },
+        tags: { ...(dictionaryAddedAtRef.current.tags || {}), ...(data.dictionaryAddedAt.tags || {}) },
+      };
+      dictionaryAddedAtRef.current = nextAdded;
+      setDictionaryAddedAt(nextAdded);
+      localStorage.setItem(STORAGE_KEYS.DICT_ADDED, JSON.stringify(nextAdded));
     }
   };
 
@@ -1205,7 +1253,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updatedAt: now,
       isDeleted: false,
     };
-    setRawClasses(prev => [...prev, newClass]);
+    const nextClasses = [...rawClassesRef.current, newClass];
+    rawClassesRef.current = nextClasses;
+    setRawClasses(nextClasses);
+    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     return newClass;
   };
 
@@ -1222,7 +1273,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isDeleted: false,
       };
     });
-    setRawClasses(prev => [...prev, ...created]);
+    const nextClasses = [...rawClassesRef.current, ...created];
+    rawClassesRef.current = nextClasses;
+    setRawClasses(nextClasses);
+    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     return created;
   };
 
@@ -1230,37 +1284,42 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const now = Date.now();
     const effectiveLevel = updated.currentLevel || updated.level;
 
-    setRawClasses(prev =>
-      prev.map(c => {
-        if (c.id === id) {
-          const nextLevel = effectiveLevel || c.currentLevel || c.level || 'BF1';
-          return {
-            ...c,
-            ...updated,
-            level: nextLevel,
-            currentLevel: nextLevel,
-            updatedAt: now,
-            isDeleted: false,
-          };
-        }
-        return c;
-      })
-    );
+    const nextClasses = rawClassesRef.current.map(c => {
+      if (c.id === id) {
+        const nextLevel = effectiveLevel || c.currentLevel || c.level || 'BF1';
+        return {
+          ...c,
+          ...updated,
+          level: nextLevel,
+          currentLevel: nextLevel,
+          updatedAt: now,
+          isDeleted: false,
+        };
+      }
+      return c;
+    });
+    rawClassesRef.current = nextClasses;
+    setRawClasses(nextClasses);
+    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
 
     if (effectiveLevel && syncStudentsLevel) {
-      setRawStudents(prev =>
-        prev.map(s =>
-          s.classId === id
-            ? { ...s, currentLevel: effectiveLevel, updatedAt: now }
-            : s
-        )
+      const nextStudents = rawStudentsRef.current.map(s =>
+        s.classId === id
+          ? { ...s, currentLevel: effectiveLevel, updatedAt: now }
+          : s
       );
+      rawStudentsRef.current = nextStudents;
+      setRawStudents(nextStudents);
+      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     }
 
     if (updated.name) {
-      setRawScoreRecords(prev =>
-        prev.map(r => (r.classId === id ? { ...r, className: updated.name!, updatedAt: now } : r))
+      const nextRecords = rawScoreRecordsRef.current.map(r =>
+        r.classId === id ? { ...r, className: updated.name!, updatedAt: now } : r
       );
+      rawScoreRecordsRef.current = nextRecords;
+      setRawScoreRecords(nextRecords);
+      localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
     }
   };
 
@@ -1505,50 +1564,170 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     cls: Omit<ClassGroup, 'id'>,
     options?: { teacherName?: string }
   ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
-    const created = addClass(cls);
-    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+    const now = Date.now();
+    const levelVal = cls.currentLevel || cls.level || 'BF1';
+    const newClass: ClassGroup = {
+      ...cls,
+      level: levelVal,
+      currentLevel: levelVal,
+      id: `cls_${now}_${Math.random().toString(36).substring(2, 6)}`,
+      updatedAt: now,
+      isDeleted: false,
+    };
 
-    if (!gistConfig.token || !gistConfig.gistId) {
+    const nextClasses = [...rawClassesRef.current, newClass];
+    rawClassesRef.current = nextClasses;
+    setRawClasses(nextClasses);
+    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
+
+    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+    const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
+
+    if (!isCloudReady) {
+      const msg = `✅ 已创建班级【${newClass.name}】（主授级别: ${levelVal}，已保存在本地）`;
+      showSyncNotification({
+        id: `sync_add_class_local_${Date.now()}`,
+        type: 'info',
+        action: 'save_and_push',
+        title: '新班级已在本地创建',
+        message: `${msg}。如需跨设备同步给其他老师，请前往【Gist云同步协作】配置 GitHub Token 与 Gist ID。`,
+        timestamp: new Date().toLocaleTimeString('zh-CN'),
+        teacherName: operatorTeacher,
+        outgoingClassesCount: 1,
+        outgoingClassesUpdated: 1,
+        totalClassesCount: nextClasses.filter(c => !c.isDeleted).length,
+        totalStudentsCount: rawStudentsRef.current.filter(s => !s.isDeleted).length,
+        totalScoresCount: rawScoreRecordsRef.current.filter(r => !r.isDeleted).length
+      });
       return {
         success: true,
-        message: `已创建班级【${created.name}】（本地保存）`
+        message: msg
       };
     }
 
-    const pushRes = await pushToGist();
-    if (pushRes.success) {
-      showSyncNotification({
-        id: `sync_add_class_${Date.now()}`,
-        type: 'success',
-        action: 'save_and_push',
-        title: `新班级【${created.name}】已创建并同步云端`,
-        message: `班级【${created.name}】（主授级别: ${created.currentLevel || created.level}）已成功创建并同步至云端 Gist。`,
-        timestamp: new Date().toLocaleTimeString('zh-CN'),
-        teacherName: operatorTeacher,
-        gistId: gistConfig.gistId,
-        outgoingClassesCount: 1,
-        outgoingClassesUpdated: 1,
-        totalClassesCount: classes.length + 1,
-        totalStudentsCount: students.length,
-        totalScoresCount: scoreRecords.length
-      });
-    }
+    setIsSyncingGist(true);
+    setGistLastMessage(`正在将新班级【${newClass.name}】加密同步至云端...`);
 
-    return {
-      success: pushRes.success,
-      message: pushRes.message,
-      mergeReport: pushRes.report
-    };
+    try {
+      const fullLocalData = {
+        version: '2.0',
+        exportedAt: new Date().toISOString(),
+        classes: nextClasses,
+        students: rawStudentsRef.current,
+        scoreRecords: rawScoreRecordsRef.current,
+        levels: levelsRef.current,
+        units: unitsRef.current,
+        teachers: teachersRef.current,
+        weakPointCategories: weakPointCategoriesRef.current,
+        deletedEntities: deletedEntitiesRef.current,
+        dictionaryAddedAt: dictionaryAddedAtRef.current
+      };
+
+      const res = await pushDataToGistWithSmartMerge(
+        gistConfig.token,
+        gistConfig.gistId,
+        fullLocalData,
+        gistConfig.filename || DEFAULT_GIST_FILENAME
+      );
+
+      if (res.success) {
+        if (res.data) {
+          applyMergedData(res.data);
+        }
+        if (res.report) {
+          setLatestMergeReport(res.report);
+        }
+        updateGistConfig({
+          lastSyncedAt: new Date().toISOString()
+        });
+
+        const successMsg = `✅ 班级【${newClass.name}】（主授级别: ${levelVal}）已成功创建并同步至云端！`;
+        setGistLastMessage(successMsg);
+
+        addSyncLog({
+          type: 'save_and_push',
+          success: true,
+          message: `创建新班级【${newClass.name}】（主授级别: ${levelVal}）并同步推送到云端`,
+          operatorTeacher,
+          incomingCount: res.report?.incomingScoresCount || 0,
+          totalRecordsCount: res.report?.totalScoresCount || rawScoreRecordsRef.current.filter(r => !r.isDeleted).length
+        });
+
+        showSyncNotification({
+          id: `sync_add_class_${Date.now()}`,
+          type: 'success',
+          action: 'save_and_push',
+          title: `新班级【${newClass.name}】已创建并同步云端`,
+          message: `班级【${newClass.name}】（主授级别: ${levelVal}）已成功创建并加密同步至云端 Gist。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          outgoingClassesCount: 1,
+          outgoingClassesUpdated: 1,
+          totalClassesCount: res.report?.totalClassesCount || nextClasses.filter(c => !c.isDeleted).length,
+          totalStudentsCount: res.report?.totalStudentsCount || rawStudentsRef.current.filter(s => !s.isDeleted).length,
+          totalScoresCount: res.report?.totalScoresCount || rawScoreRecordsRef.current.filter(r => !r.isDeleted).length,
+          incomingScoresCount: res.report?.incomingScoresCount,
+          incomingStudentsCount: res.report?.incomingStudentsCount,
+          incomingClassesCount: res.report?.incomingClassesCount,
+          newDictionaries: res.report?.newDictionaries
+        });
+
+        return {
+          success: true,
+          message: successMsg,
+          mergeReport: res.report
+        };
+      } else {
+        const errMsg = `⚠️ 班级已在本地创建，但云端同步失败: ${res.message}`;
+        setGistLastMessage(errMsg);
+
+        showSyncNotification({
+          id: `sync_add_class_err_${Date.now()}`,
+          type: 'error',
+          action: 'save_and_push',
+          title: '云端同步异常 (本地班级已创建)',
+          message: `新班级【${newClass.name}】已在当前设备创建成功，但同步到云端时提示: ${res.message}。请检查 GitHub Token 或网络连接。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          totalClassesCount: nextClasses.filter(c => !c.isDeleted).length,
+          totalStudentsCount: rawStudentsRef.current.filter(s => !s.isDeleted).length,
+          totalScoresCount: rawScoreRecordsRef.current.filter(r => !r.isDeleted).length
+        });
+
+        return {
+          success: false,
+          message: errMsg
+        };
+      }
+    } catch (err: any) {
+      const errMsg = `⚠️ 班级已在本地创建，但云端同步异常: ${err?.message || '网络连接超时'}`;
+      setGistLastMessage(errMsg);
+      return {
+        success: false,
+        message: errMsg
+      };
+    } finally {
+      setIsSyncingGist(false);
+    }
   };
 
   const deleteClass = (id: string) => {
     const now = Date.now();
-    setRawClasses(prev =>
-      prev.map(c => c.id === id ? { ...c, isDeleted: true, updatedAt: now } : c)
+    const nextClasses = rawClassesRef.current.map(c =>
+      c.id === id ? { ...c, isDeleted: true, updatedAt: now } : c
     );
-    setRawStudents(prev =>
-      prev.map(s => s.classId === id ? { ...s, classId: '', updatedAt: now } : s)
+    rawClassesRef.current = nextClasses;
+    setRawClasses(nextClasses);
+    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
+
+    const nextStudents = rawStudentsRef.current.map(s =>
+      s.classId === id ? { ...s, classId: '', updatedAt: now } : s
     );
+    rawStudentsRef.current = nextStudents;
+    setRawStudents(nextStudents);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
   };
 
   // 3. Student Operations
@@ -1565,7 +1744,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       classId: isSuspended ? '' : (student.classId || ''),
       suspendedAt: isSuspended ? (student.suspendedAt || new Date().toISOString().split('T')[0]) : undefined
     };
-    setRawStudents(prev => [...prev, newStudent]);
+    const nextStudents = [...rawStudentsRef.current, newStudent];
+    rawStudentsRef.current = nextStudents;
+    setRawStudents(nextStudents);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     return newStudent;
   };
 
@@ -1573,39 +1755,153 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     student: Omit<Student, 'id'>,
     options?: { teacherName?: string }
   ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
-    const created = addStudent(student);
-    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+    const now = Date.now();
+    const isSuspended = student.status === 'suspended';
+    const newStudent: Student = {
+      ...student,
+      id: `std_${now}_${Math.random().toString(36).substring(2, 6)}`,
+      updatedAt: now,
+      isDeleted: false,
+      status: student.status || 'active',
+      previousClassId: isSuspended ? (student.classId || student.previousClassId || '') : (student.previousClassId || ''),
+      classId: isSuspended ? '' : (student.classId || ''),
+      suspendedAt: isSuspended ? (student.suspendedAt || new Date().toISOString().split('T')[0]) : undefined
+    };
 
-    if (!gistConfig.token || !gistConfig.gistId) {
+    const nextStudents = [...rawStudentsRef.current, newStudent];
+    rawStudentsRef.current = nextStudents;
+    setRawStudents(nextStudents);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+
+    const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
+    const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
+
+    if (!isCloudReady) {
+      const msg = `✅ 已添加学员【${newStudent.name}】（本地保存）`;
+      showSyncNotification({
+        id: `sync_add_student_local_${Date.now()}`,
+        type: 'info',
+        action: 'save_and_push',
+        title: '新学员已在本地建档',
+        message: `${msg}。如需跨设备同步给其他老师，请前往【Gist云同步协作】配置 GitHub Token 与 Gist ID。`,
+        timestamp: new Date().toLocaleTimeString('zh-CN'),
+        teacherName: operatorTeacher,
+        outgoingStudentsCount: 1,
+        totalStudentsCount: nextStudents.filter(s => !s.isDeleted).length,
+        totalClassesCount: rawClassesRef.current.filter(c => !c.isDeleted).length,
+        totalScoresCount: rawScoreRecordsRef.current.filter(r => !r.isDeleted).length
+      });
       return {
         success: true,
-        message: `已添加学员【${created.name}】（本地保存）`
+        message: msg
       };
     }
 
-    const pushRes = await pushToGist();
-    if (pushRes.success) {
-      showSyncNotification({
-        id: `sync_add_student_${Date.now()}`,
-        type: 'success',
-        action: 'save_and_push',
-        title: `学员【${created.name}】已建档并同步云端`,
-        message: `学员【${created.name}】（级别: ${created.currentLevel}）已成功注册入库并同步至云端 Gist。`,
-        timestamp: new Date().toLocaleTimeString('zh-CN'),
-        teacherName: operatorTeacher,
-        gistId: gistConfig.gistId,
-        outgoingStudentsCount: 1,
-        totalStudentsCount: students.length + 1,
-        totalClassesCount: classes.length,
-        totalScoresCount: scoreRecords.length
-      });
-    }
+    setIsSyncingGist(true);
+    setGistLastMessage(`正在将新学员【${newStudent.name}】同步至云端...`);
 
-    return {
-      success: pushRes.success,
-      message: pushRes.message,
-      mergeReport: pushRes.report
-    };
+    try {
+      const fullLocalData = {
+        version: '2.0',
+        exportedAt: new Date().toISOString(),
+        classes: rawClassesRef.current,
+        students: nextStudents,
+        scoreRecords: rawScoreRecordsRef.current,
+        levels: levelsRef.current,
+        units: unitsRef.current,
+        teachers: teachersRef.current,
+        weakPointCategories: weakPointCategoriesRef.current,
+        deletedEntities: deletedEntitiesRef.current,
+        dictionaryAddedAt: dictionaryAddedAtRef.current
+      };
+
+      const res = await pushDataToGistWithSmartMerge(
+        gistConfig.token,
+        gistConfig.gistId,
+        fullLocalData,
+        gistConfig.filename || DEFAULT_GIST_FILENAME
+      );
+
+      if (res.success) {
+        if (res.data) {
+          applyMergedData(res.data);
+        }
+        if (res.report) {
+          setLatestMergeReport(res.report);
+        }
+        updateGistConfig({
+          lastSyncedAt: new Date().toISOString()
+        });
+
+        const successMsg = `✅ 学员【${newStudent.name}】已成功建档并同步至云端！`;
+        setGistLastMessage(successMsg);
+
+        addSyncLog({
+          type: 'save_and_push',
+          success: true,
+          message: `学员【${newStudent.name}】（级别: ${newStudent.currentLevel}）已入库并同步推送到云端`,
+          operatorTeacher,
+          incomingCount: res.report?.incomingScoresCount || 0,
+          totalRecordsCount: res.report?.totalScoresCount || rawScoreRecordsRef.current.filter(r => !r.isDeleted).length
+        });
+
+        showSyncNotification({
+          id: `sync_add_student_${Date.now()}`,
+          type: 'success',
+          action: 'save_and_push',
+          title: `学员【${newStudent.name}】已建档并同步云端`,
+          message: `学员【${newStudent.name}】（级别: ${newStudent.currentLevel}）已成功注册入库并加密同步至云端 Gist。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          outgoingStudentsCount: 1,
+          totalStudentsCount: res.report?.totalStudentsCount || nextStudents.filter(s => !s.isDeleted).length,
+          totalClassesCount: res.report?.totalClassesCount || rawClassesRef.current.filter(c => !c.isDeleted).length,
+          totalScoresCount: res.report?.totalScoresCount || rawScoreRecordsRef.current.filter(r => !r.isDeleted).length,
+          incomingScoresCount: res.report?.incomingScoresCount,
+          incomingStudentsCount: res.report?.incomingStudentsCount,
+          incomingClassesCount: res.report?.incomingClassesCount,
+          newDictionaries: res.report?.newDictionaries
+        });
+
+        return {
+          success: true,
+          message: successMsg,
+          mergeReport: res.report
+        };
+      } else {
+        const errMsg = `⚠️ 学员已在本地创建，但云端同步失败: ${res.message}`;
+        setGistLastMessage(errMsg);
+
+        showSyncNotification({
+          id: `sync_add_student_err_${Date.now()}`,
+          type: 'error',
+          action: 'save_and_push',
+          title: '云端同步异常 (本地学员已建档)',
+          message: `新学员【${newStudent.name}】已在当前设备建档成功，但同步到云端时提示: ${res.message}。请检查 GitHub Token 或网络连接。`,
+          timestamp: new Date().toLocaleTimeString('zh-CN'),
+          teacherName: operatorTeacher,
+          gistId: gistConfig.gistId,
+          totalStudentsCount: nextStudents.filter(s => !s.isDeleted).length,
+          totalClassesCount: rawClassesRef.current.filter(c => !c.isDeleted).length,
+          totalScoresCount: rawScoreRecordsRef.current.filter(r => !r.isDeleted).length
+        });
+
+        return {
+          success: false,
+          message: errMsg
+        };
+      }
+    } catch (err: any) {
+      const errMsg = `⚠️ 学员已在本地创建，但云端同步异常: ${err?.message || '网络连接超时'}`;
+      setGistLastMessage(errMsg);
+      return {
+        success: false,
+        message: errMsg
+      };
+    } finally {
+      setIsSyncingGist(false);
+    }
   };
 
   const updateStudent = (id: string, updated: Partial<Student>) => {
@@ -2001,12 +2297,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteStudent = (id: string) => {
     const now = Date.now();
-    setRawStudents(prev =>
-      prev.map(s => s.id === id ? { ...s, isDeleted: true, updatedAt: now } : s)
+    const nextStudents = rawStudentsRef.current.map(s =>
+      s.id === id ? { ...s, isDeleted: true, updatedAt: now } : s
     );
-    setRawScoreRecords(prev =>
-      prev.map(r => r.studentId === id ? { ...r, isDeleted: true, updatedAt: now } : r)
+    rawStudentsRef.current = nextStudents;
+    setRawStudents(nextStudents);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+
+    const nextRecords = rawScoreRecordsRef.current.map(r =>
+      r.studentId === id ? { ...r, isDeleted: true, updatedAt: now } : r
     );
+    rawScoreRecordsRef.current = nextRecords;
+    setRawScoreRecords(nextRecords);
+    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
   };
 
   const batchAddStudents = (newStudentsList: Omit<Student, 'id'>[]) => {
@@ -2018,19 +2321,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isDeleted: false,
       status: s.status || 'active'
     }));
-    setRawStudents(prev => [...prev, ...created]);
+    const nextStudents = [...rawStudentsRef.current, ...created];
+    rawStudentsRef.current = nextStudents;
+    setRawStudents(nextStudents);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
   };
 
   const batchDeleteStudents = (studentIds: string[]) => {
     if (!studentIds || studentIds.length === 0) return;
     const now = Date.now();
     const idSet = new Set(studentIds);
-    setRawStudents(prev =>
-      prev.map(s => idSet.has(s.id) ? { ...s, isDeleted: true, updatedAt: now } : s)
+    const nextStudents = rawStudentsRef.current.map(s =>
+      idSet.has(s.id) ? { ...s, isDeleted: true, updatedAt: now } : s
     );
-    setRawScoreRecords(prev =>
-      prev.map(r => idSet.has(r.studentId) ? { ...r, isDeleted: true, updatedAt: now } : r)
+    rawStudentsRef.current = nextStudents;
+    setRawStudents(nextStudents);
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+
+    const nextRecords = rawScoreRecordsRef.current.map(r =>
+      idSet.has(r.studentId) ? { ...r, isDeleted: true, updatedAt: now } : r
     );
+    rawScoreRecordsRef.current = nextRecords;
+    setRawScoreRecords(nextRecords);
+    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
   };
 
   const transferStudent = (
