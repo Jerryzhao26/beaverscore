@@ -186,13 +186,20 @@ const normalizeScore = (s: any): ScoreRecord => ({
   weakPoints: Array.isArray(s.weakPoints) ? s.weakPoints : []
 });
 
-const normalizeStudent = (s: any): Student => ({
-  ...s,
-  id: s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-  updatedAt: normalizeTimestamp(s.updatedAt),
-  isDeleted: Boolean(s.isDeleted),
-  status: s.status || 'active'
-});
+const normalizeStudent = (s: any): Student => {
+  const status = s.status || 'active';
+  const isSuspended = status === 'suspended';
+  return {
+    ...s,
+    id: s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    updatedAt: normalizeTimestamp(s.updatedAt),
+    isDeleted: Boolean(s.isDeleted),
+    status,
+    previousClassId: isSuspended ? (s.previousClassId || s.classId || '') : (s.previousClassId || ''),
+    classId: isSuspended ? '' : (s.classId || ''),
+    suspendedAt: isSuspended ? (s.suspendedAt || new Date().toISOString().split('T')[0]) : undefined
+  };
+};
 
 const normalizeClass = (c: any): ClassGroup => {
   const lvl = c.currentLevel || c.level || 'BF1';
@@ -1547,12 +1554,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // 3. Student Operations
   const addStudent = (student: Omit<Student, 'id'>): Student => {
     const now = Date.now();
+    const isSuspended = student.status === 'suspended';
     const newStudent: Student = {
       ...student,
       id: `std_${now}_${Math.random().toString(36).substring(2, 6)}`,
       updatedAt: now,
       isDeleted: false,
-      status: student.status || 'active'
+      status: student.status || 'active',
+      previousClassId: isSuspended ? (student.classId || student.previousClassId || '') : (student.previousClassId || ''),
+      classId: isSuspended ? '' : (student.classId || ''),
+      suspendedAt: isSuspended ? (student.suspendedAt || new Date().toISOString().split('T')[0]) : undefined
     };
     setRawStudents(prev => [...prev, newStudent]);
     return newStudent;
@@ -1599,12 +1610,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateStudent = (id: string, updated: Partial<Student>) => {
     const now = Date.now();
+    const prevStudent = rawStudents.find(s => s.id === id);
+    const finalUpdated: Partial<Student> = { ...updated };
+
+    if (finalUpdated.status === 'suspended') {
+      finalUpdated.classId = '';
+      if (!finalUpdated.previousClassId) {
+        finalUpdated.previousClassId = prevStudent?.classId || prevStudent?.previousClassId || '';
+      }
+      if (!finalUpdated.suspendedAt) {
+        finalUpdated.suspendedAt = new Date().toISOString().split('T')[0];
+      }
+    } else if (finalUpdated.status === 'active' && prevStudent?.status === 'suspended') {
+      if (!finalUpdated.classId && prevStudent?.previousClassId) {
+        finalUpdated.classId = prevStudent.previousClassId;
+      }
+      finalUpdated.suspendedAt = undefined;
+    }
+
     setRawStudents(prev =>
-      prev.map(s => (s.id === id ? { ...s, ...updated, updatedAt: now, isDeleted: false } : s))
+      prev.map(s => (s.id === id ? { ...s, ...finalUpdated, updatedAt: now, isDeleted: false } : s))
     );
-    if (updated.name) {
+    if (finalUpdated.name) {
       setRawScoreRecords(prev =>
-        prev.map(r => (r.studentId === id ? { ...r, studentName: updated.name!, updatedAt: now } : r))
+        prev.map(r => (r.studentId === id ? { ...r, studentName: finalUpdated.name!, updatedAt: now } : r))
       );
     }
   };
@@ -1623,6 +1652,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const levelChanged = oldLevel.trim().toUpperCase() !== newLevel.trim().toUpperCase();
     const studentName = updated.name ? updated.name.trim() : (prevStudent?.name || '学员');
 
+    const finalUpdated: Partial<Student> = { ...updated };
+    if (finalUpdated.status === 'suspended') {
+      finalUpdated.classId = '';
+      if (!finalUpdated.previousClassId) {
+        finalUpdated.previousClassId = prevStudent?.classId || prevStudent?.previousClassId || '';
+      }
+      if (!finalUpdated.suspendedAt) {
+        finalUpdated.suspendedAt = new Date().toISOString().split('T')[0];
+      }
+    } else if (finalUpdated.status === 'active' && prevStudent?.status === 'suspended') {
+      if (!finalUpdated.classId && prevStudent?.previousClassId) {
+        finalUpdated.classId = prevStudent.previousClassId;
+      }
+      finalUpdated.suspendedAt = undefined;
+    }
+
     const outgoingStudentUpdates = [
       {
         studentId: id,
@@ -1637,7 +1682,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ];
 
     const nextStudents = rawStudents.map(s =>
-      s.id === id ? { ...s, ...updated, currentLevel: newLevel, updatedAt: now, isDeleted: false } : s
+      s.id === id ? { ...s, ...finalUpdated, currentLevel: newLevel, updatedAt: now, isDeleted: false } : s
     );
     setRawStudents(nextStudents);
 
@@ -2100,8 +2145,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               status: 'suspended',
               suspendedAt: dateStr,
               suspendReason: reasonText,
-              previousClassId: s.classId || s.previousClassId,
-              classId: removeFromClass ? '' : s.classId,
+              previousClassId: s.classId || s.previousClassId || '',
+              classId: '',
               notes: updatedNotes,
               updatedAt: now,
               isDeleted: false

@@ -5,7 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: '/beaverscore/', // 👈 新增这一行：匹配你的 GitHub 仓库名，解决资源加载 404 及空白页问题
+    base: process.env.GITHUB_ACTIONS ? '/beaverscore/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
@@ -13,6 +13,9 @@ export default defineConfig(() => {
       },
     },
     server: {
+      host: '0.0.0.0',
+      port: 3000,
+      allowedHosts: true as const,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

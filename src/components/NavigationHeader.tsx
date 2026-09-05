@@ -38,7 +38,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
     manualRefreshFromCloud
   } = useApp();
 
-  const totalStudents = students?.length || 0;
+  const activeStudentsCount = students?.filter(s => s.status !== 'suspended').length || 0;
   const totalRecords = scoreRecords?.length || 0;
   const isGistConnected = Boolean(gistConfig?.gistId && gistConfig?.token);
 
@@ -87,7 +87,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
       id: 'management',
       label: '班级与设置',
       icon: <Settings className="w-4 h-4" />,
-      badge: `${totalStudents}人`
+      badge: `${activeStudentsCount}人`
     }
   ];
 

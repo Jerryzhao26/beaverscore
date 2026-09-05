@@ -62,7 +62,7 @@ const MainAppContent: React.FC = () => {
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>机构学员日常成绩管理与学情分析系统 · 多教师手动保存智能合并 · 私有 Gist 云协同</span>
           <span className="font-mono text-[11px]">
-            在册学员: {students.length} 人 | 班级: {classes.length} 个 | 累计测评档案: {scoreRecords.length} 条
+            在读学员: {students.filter(s => s.status !== 'suspended').length} 人{students.some(s => s.status === 'suspended') ? ` (休学/结业: ${students.filter(s => s.status === 'suspended').length}人)` : ''} | 班级: {classes.length} 个 | 累计测评档案: {scoreRecords.length} 条
           </span>
         </div>
       </footer>

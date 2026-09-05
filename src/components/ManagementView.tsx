@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Student, ClassGroup } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Database,
   UserCheck,
+  UserMinus,
   FileSpreadsheet,
   Cloud,
   CloudUpload,
@@ -60,6 +61,12 @@ export const ManagementView: React.FC = () => {
     updateStudentAndSync,
     batchUpdateStudentsLevelAndSync,
     deleteStudent,
+    transferStudent,
+    batchTransferStudents,
+    suspendStudent,
+    restoreStudent,
+    batchSuspendStudents,
+    batchRestoreStudents,
     addClass,
     addClassAndSync,
     updateClass,
@@ -86,6 +93,10 @@ export const ManagementView: React.FC = () => {
   // Loading state for save & sync buttons
   const [isSavingAndSyncing, setIsSavingAndSyncing] = useState<boolean>(false);
 
+  // Active vs Suspended students
+  const activeStudents = useMemo(() => students.filter(s => s.status !== 'suspended'), [students]);
+  const suspendedStudents = useMemo(() => students.filter(s => s.status === 'suspended'), [students]);
+
   // Student Form State
   const [isEditingStudent, setIsEditingStudent] = useState<boolean>(false);
   const [studentForm, setStudentForm] = useState<{
@@ -94,6 +105,7 @@ export const ManagementView: React.FC = () => {
     studentNo: string;
     gender: 'male' | 'female';
     classId: string;
+    previousClassId?: string;
     currentLevel: string;
     status: 'active' | 'suspended';
     contactPhone?: string;
@@ -103,6 +115,7 @@ export const ManagementView: React.FC = () => {
     studentNo: '',
     gender: 'male',
     classId: classes[0]?.id || '',
+    previousClassId: '',
     currentLevel: levels[0] || 'BF1',
     status: 'active',
     contactPhone: '',
@@ -171,21 +184,38 @@ export const ManagementView: React.FC = () => {
     setTimeout(() => setToastMessage(''), 4000);
   };
 
-  const filteredStudents = students.filter(s => {
-    if (studentClassFilter === 'unassigned') {
-      if (s.classId && classes.some(c => c.id === s.classId)) return false;
-    } else if (studentClassFilter !== 'all' && s.classId !== studentClassFilter) {
-      return false;
-    }
-    if (
-      studentSearch.trim() &&
-      !s.name.toLowerCase().includes(studentSearch.trim().toLowerCase()) &&
-      !s.studentNo.includes(studentSearch.trim())
-    ) {
-      return false;
-    }
-    return true;
-  });
+  const filteredStudents = useMemo(() => {
+    return students.filter(s => {
+      const isSuspended = s.status === 'suspended';
+
+      if (studentClassFilter === 'all') {
+        // Default view: in-school active students
+        if (isSuspended) return false;
+      } else if (studentClassFilter === 'unassigned') {
+        // In-school active unassigned students
+        if (isSuspended) return false;
+        if (s.classId && classes.some(c => c.id === s.classId)) return false;
+      } else if (studentClassFilter === 'suspended') {
+        // Suspended students only
+        if (!isSuspended) return false;
+      } else if (studentClassFilter === 'everything') {
+        // All students including suspended
+      } else {
+        // Specific class filter: in-school active students in this class
+        if (isSuspended) return false;
+        if (s.classId !== studentClassFilter) return false;
+      }
+
+      if (
+        studentSearch.trim() &&
+        !s.name.toLowerCase().includes(studentSearch.trim().toLowerCase()) &&
+        !s.studentNo.includes(studentSearch.trim())
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [students, studentClassFilter, studentSearch, classes]);
 
   // Toggle selection for all filtered students
   const handleSelectAllFiltered = () => {
@@ -210,16 +240,24 @@ export const ManagementView: React.FC = () => {
     }
 
     const targetLevel = studentForm.currentLevel || levels[0] || 'BF1';
+    const isSuspended = studentForm.status === 'suspended';
+    const currentStudent = isEditingStudent && studentForm.id ? students.find(s => s.id === studentForm.id) : undefined;
+    const previousClassId = isSuspended
+      ? (studentForm.previousClassId || currentStudent?.classId || studentForm.classId || currentStudent?.previousClassId || '')
+      : undefined;
+
     const studentData = {
       name: studentForm.name.trim(),
       studentNo: studentForm.studentNo.trim() || `S${Math.floor(1000 + Math.random() * 9000)}`,
       gender: studentForm.gender,
-      classId: studentForm.classId,
+      classId: isSuspended ? '' : studentForm.classId,
+      previousClassId: previousClassId,
       currentLevel: targetLevel,
       status: studentForm.status,
+      suspendedAt: isSuspended ? (currentStudent?.suspendedAt || new Date().toISOString().split('T')[0]) : undefined,
       contactPhone: studentForm.contactPhone,
       parentNote: studentForm.parentNote,
-      enrolledDate: new Date().toISOString().split('T')[0]
+      enrolledDate: currentStudent?.enrolledDate || new Date().toISOString().split('T')[0]
     };
 
     setIsSavingAndSyncing(true);
@@ -231,7 +269,7 @@ export const ManagementView: React.FC = () => {
           showToast(res.message);
         } else {
           updateStudent(studentForm.id, studentData);
-          showToast(`✅ 学员【${studentForm.name.trim()}】档案已保存至本地`);
+          showToast(`✅ 学员【${studentForm.name.trim()}】档案已保存至本地${isSuspended ? '（已设为休学/结业并移出班级）' : ''}`);
         }
       } else {
         if (syncToCloud) {
@@ -249,6 +287,7 @@ export const ManagementView: React.FC = () => {
         studentNo: '',
         gender: 'male',
         classId: classes[0]?.id || '',
+        previousClassId: '',
         currentLevel: levels[0] || 'BF1',
         status: 'active',
         contactPhone: '',
@@ -268,7 +307,8 @@ export const ManagementView: React.FC = () => {
       name: student.name || '',
       studentNo: student.studentNo || '',
       gender: student.gender || 'male',
-      classId: student.classId || '',
+      classId: student.status === 'suspended' ? '' : (student.classId || ''),
+      previousClassId: student.previousClassId || (student.status === 'suspended' ? '' : student.classId),
       currentLevel: student.currentLevel || (levels[0] || 'BF1'),
       status: student.status || 'active',
       contactPhone: student.contactPhone || '',
@@ -331,7 +371,7 @@ export const ManagementView: React.FC = () => {
 
     try {
       if (isEditingClass && classForm.id) {
-        const studentCountInClass = students.filter(s => s.classId === classForm.id).length;
+        const studentCountInClass = students.filter(s => s.classId === classForm.id && s.status !== 'suspended').length;
         if (syncToCloud) {
           const res = await updateClassAndSync(classForm.id, classData, true);
           showToast(res.message);
@@ -598,7 +638,7 @@ export const ManagementView: React.FC = () => {
               }`}
             >
               <Users className="w-3.5 h-3.5 mr-1" />
-              学员名册 ({students.length})
+              学员名册 ({activeStudents.length})
             </button>
 
             <button
@@ -732,29 +772,45 @@ export const ManagementView: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">所属班级</label>
-                  <select
-                    value={studentForm.classId || ''}
-                    onChange={e => {
-                      const newClassId = e.target.value;
-                      const matchedClass = classes.find(c => c.id === newClassId);
-                      setStudentForm({
-                        ...studentForm,
-                        classId: newClassId,
-                        currentLevel: matchedClass
-                          ? matchedClass.currentLevel || matchedClass.level || studentForm.currentLevel
-                          : studentForm.currentLevel
-                      });
-                    }}
-                    className="w-full p-2 border border-slate-300 rounded-lg text-xs text-slate-800 cursor-pointer"
-                  >
-                    <option value="">-- 暂不分班 (未分配) --</option>
-                    {classes.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.currentLevel || c.level})
-                      </option>
-                    ))}
-                  </select>
+                  <label className="block font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                    <span>所属班级</span>
+                    {studentForm.status === 'suspended' && (
+                      <span className="text-[10px] text-amber-600 font-semibold">已从班级移除</span>
+                    )}
+                  </label>
+                  {studentForm.status === 'suspended' ? (
+                    <div className="w-full p-2 border border-slate-200 bg-slate-100 rounded-lg text-xs text-slate-600 flex items-center justify-between">
+                      <span>⏸️ 已移出班级 (不占班额)</span>
+                      {studentForm.previousClassId && (
+                        <span className="text-[10px] text-slate-400">
+                          原: {classes.find(c => c.id === studentForm.previousClassId)?.name || '原班级'}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <select
+                      value={studentForm.classId || ''}
+                      onChange={e => {
+                        const newClassId = e.target.value;
+                        const matchedClass = classes.find(c => c.id === newClassId);
+                        setStudentForm({
+                          ...studentForm,
+                          classId: newClassId,
+                          currentLevel: matchedClass
+                            ? matchedClass.currentLevel || matchedClass.level || studentForm.currentLevel
+                            : studentForm.currentLevel
+                        });
+                      }}
+                      className="w-full p-2 border border-slate-300 rounded-lg text-xs text-slate-800 cursor-pointer"
+                    >
+                      <option value="">-- 暂不分班 (未分配) --</option>
+                      {classes.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({c.currentLevel || c.level})
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
@@ -776,14 +832,30 @@ export const ManagementView: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">在读状态</label>
+                  <label className="block font-semibold text-slate-700 mb-1">学籍状态</label>
                   <select
                     value={studentForm.status || 'active'}
-                    onChange={e => setStudentForm({ ...studentForm, status: e.target.value as any })}
+                    onChange={e => {
+                      const newStatus = e.target.value as 'active' | 'suspended';
+                      if (newStatus === 'suspended') {
+                        setStudentForm(prev => ({
+                          ...prev,
+                          status: 'suspended',
+                          previousClassId: prev.classId || prev.previousClassId || '',
+                          classId: ''
+                        }));
+                      } else {
+                        setStudentForm(prev => ({
+                          ...prev,
+                          status: 'active',
+                          classId: prev.classId || prev.previousClassId || classes[0]?.id || ''
+                        }));
+                      }
+                    }}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs text-slate-800 cursor-pointer"
                   >
-                    <option value="active">🟢 正常在读 (Active)</option>
-                    <option value="suspended">⏸️ 休学 / 结业 (Suspended)</option>
+                    <option value="active">🟢 正常在读 (计入班级人数)</option>
+                    <option value="suspended">⏸️ 休学 / 结业 (移出班级且不占班额)</option>
                   </select>
                 </div>
                 <div>
@@ -797,6 +869,16 @@ export const ManagementView: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {studentForm.status === 'suspended' && (
+                <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-1.5">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">休学/结业处理规则：</span>
+                    该学员已自动从所属班级名册中移除，不再计入班级和全校在读学生人数。历史测评与成绩档案完整保留。办理复学时可重新分配班级。
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">家长沟通与特别备注</label>
@@ -871,10 +953,10 @@ export const ManagementView: React.FC = () => {
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center">
                   <UserCheck className="w-4 h-4 mr-1.5 text-indigo-600" />
-                  在册学员总览 ({filteredStudents.length}/{students.length} 人)
+                  学员档案列表 (在读 {activeStudents.length} 人{suspendedStudents.length > 0 ? ` · 休学/结业 ${suspendedStudents.length} 人` : ''})
                 </h3>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  点击学员【在读级别】可快速调级，或使用批量调级工具一键同步云端
+                  休学/结业学员已自动移出班级且不占班额；点击状态或操作按钮可随时办理休学与复学
                 </p>
               </div>
 
@@ -882,26 +964,32 @@ export const ManagementView: React.FC = () => {
                 <select
                   value={studentClassFilter}
                   onChange={e => setStudentClassFilter(e.target.value)}
-                  className="p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 cursor-pointer"
+                  className="p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 cursor-pointer font-medium"
                 >
-                  <option value="all">全部班级 ({students.length})</option>
+                  <option value="all">全部在读学员 ({activeStudents.length}人)</option>
                   <option value="unassigned">
-                    未分班学员 (
+                    未分班在读学员 (
                     {
-                      students.filter(
+                      activeStudents.filter(
                         s => !s.classId || !classes.some(c => c.id === s.classId)
                       ).length
                     }
-                    )
+                    人)
                   </option>
                   {classes.map(c => {
-                    const cnt = students.filter(s => s.classId === c.id).length;
+                    const cnt = activeStudents.filter(s => s.classId === c.id).length;
                     return (
                       <option key={c.id} value={c.id}>
-                        {c.name} ({cnt}人)
+                        {c.name} ({cnt}人在读)
                       </option>
                     );
                   })}
+                  <option value="suspended">
+                    ⏸️ 休学/结业学员 (已移出班级 · {suspendedStudents.length}人)
+                  </option>
+                  <option value="everything">
+                    全部学员档案 (含休学共 {students.length}人)
+                  </option>
                 </select>
 
                 <div className="relative">
@@ -937,7 +1025,7 @@ export const ManagementView: React.FC = () => {
             {/* Batch Action Bar (Visible when students are checked) */}
             {selectedStudentIds.length > 0 && (
               <div className="mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-150">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-bold text-xs">
                     已勾选 {selectedStudentIds.length} 位学员
                   </span>
@@ -957,7 +1045,7 @@ export const ManagementView: React.FC = () => {
                   </select>
                 </div>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     id="btn-batch-adjust-sync"
                     disabled={isSavingAndSyncing || isSyncingGist}
@@ -967,6 +1055,73 @@ export const ManagementView: React.FC = () => {
                     <CloudUpload className="w-3.5 h-3.5 mr-1" />
                     批量调级并同步至云端
                   </button>
+
+                  {selectedStudentIds.some(id => students.find(s => s.id === id)?.status !== 'suspended') && (
+                    <button
+                      onClick={() => {
+                        const activeSelectedCount = selectedStudentIds.filter(id => students.find(s => s.id === id)?.status !== 'suspended').length;
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: `批量办理 ${activeSelectedCount} 位学员休学/结业？`,
+                          message: (
+                            <div className="space-y-2 text-xs text-slate-600">
+                              <p>确定将勾选的 <strong className="text-slate-900">{activeSelectedCount}</strong> 位在读学员设为休学/结业状态吗？</p>
+                              <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200 text-amber-800 space-y-1">
+                                <div>• <strong>自动移出班级</strong>：学员将从所属班级中移除，不再占用班额</div>
+                                <div>• <strong>扣减在读人数</strong>：班级及全校在读学生人数将相应扣减</div>
+                                <div>• <strong>档案完整保留</strong>：历史成绩记录完好归档，后续可随时办理复学</div>
+                              </div>
+                            </div>
+                          ),
+                          confirmText: '确认移出班级并休学',
+                          variant: 'warning',
+                          onConfirm: () => {
+                            batchSuspendStudents(selectedStudentIds, '批量设为休学/结业');
+                            setSelectedStudentIds([]);
+                            showToast(`✅ 已将 ${activeSelectedCount} 位学员设为休学/结业，已自动移出班级且不占班额`);
+                          }
+                        });
+                      }}
+                      className="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold flex items-center transition cursor-pointer"
+                      title="批量设为休学/结业状态并从所属班级移出"
+                    >
+                      <UserMinus className="w-3.5 h-3.5 mr-1 text-amber-700" />
+                      批量休学/结业 (移出班级)
+                    </button>
+                  )}
+
+                  {selectedStudentIds.some(id => students.find(s => s.id === id)?.status === 'suspended') && (
+                    <button
+                      onClick={() => {
+                        const suspendedSelectedCount = selectedStudentIds.filter(id => students.find(s => s.id === id)?.status === 'suspended').length;
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: `批量办理 ${suspendedSelectedCount} 位学员复学？`,
+                          message: (
+                            <div className="space-y-2 text-xs text-slate-600">
+                              <p>确定将勾选的 <strong className="text-slate-900">{suspendedSelectedCount}</strong> 位学员恢复为在读状态吗？</p>
+                              <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-800 space-y-1">
+                                <div>• <strong>分配班级</strong>：学员将重新分配入原所属班级（或首个班级）</div>
+                                <div>• <strong>计入在读人数</strong>：班级及全校在读人数将增加 {suspendedSelectedCount} 人</div>
+                              </div>
+                            </div>
+                          ),
+                          confirmText: '确认办理复学',
+                          variant: 'primary',
+                          onConfirm: () => {
+                            batchRestoreStudents(selectedStudentIds);
+                            setSelectedStudentIds([]);
+                            showToast(`✅ 已成功办理 ${suspendedSelectedCount} 位学员复学，重新计入班级人数`);
+                          }
+                        });
+                      }}
+                      className="px-2.5 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 rounded-lg text-xs font-bold flex items-center transition cursor-pointer"
+                      title="批量办理复学并重新计入班级"
+                    >
+                      <UserCheck className="w-3.5 h-3.5 mr-1 text-emerald-700" />
+                      批量复学
+                    </button>
+                  )}
 
                   <button
                     onClick={() => setSelectedStudentIds([])}
@@ -1012,13 +1167,17 @@ export const ManagementView: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {filteredStudents.map(student => {
                     const isSelected = selectedStudentIds.includes(student.id);
-                    const isQuickLevelOpen = quickLevelStudentId === student.id;
+                    const isSuspended = student.status === 'suspended';
 
                     return (
                       <tr
                         key={student.id}
                         className={`transition ${
-                          isSelected ? 'bg-indigo-50/40' : 'hover:bg-slate-50'
+                          isSelected
+                            ? 'bg-indigo-50/40'
+                            : isSuspended
+                            ? 'bg-slate-50/50 hover:bg-slate-100/60'
+                            : 'hover:bg-slate-50'
                         }`}
                       >
                         <td className="py-2.5 px-3 text-center">
@@ -1041,7 +1200,25 @@ export const ManagementView: React.FC = () => {
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-slate-700">
-                          {classes.find(c => c.id === student.classId)?.name || (
+                          {isSuspended ? (
+                            <div className="flex flex-col items-start">
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                                ⏸️ 已移出班级
+                              </span>
+                              {student.previousClassId && (
+                                <span
+                                  className="text-[10px] text-slate-400 mt-0.5"
+                                  title={`原所在班级: ${classes.find(c => c.id === student.previousClassId)?.name || '原班级'}`}
+                                >
+                                  原: {classes.find(c => c.id === student.previousClassId)?.name || '原班级'}
+                                </span>
+                              )}
+                            </div>
+                          ) : classes.find(c => c.id === student.classId)?.name ? (
+                            <span className="font-medium text-slate-800">
+                              {classes.find(c => c.id === student.classId)?.name}
+                            </span>
+                          ) : (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
                               未分班
                             </span>
@@ -1067,13 +1244,18 @@ export const ManagementView: React.FC = () => {
                         </td>
 
                         <td className="py-2.5 px-3">
-                          {student.status === 'active' ? (
-                            <span className="px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold text-[10px]">
+                          {!isSuspended ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                               在读
                             </span>
                           ) : (
-                            <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px]">
-                              休学
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-semibold text-[10px] border border-slate-200"
+                              title="休学/结业状态 · 不占班级名额"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                              休学/结业
                             </span>
                           )}
                         </td>
@@ -1081,6 +1263,69 @@ export const ManagementView: React.FC = () => {
                           {student.contactPhone || '-'}
                         </td>
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          {/* Quick Suspend / Restore Action Button */}
+                          {!isSuspended ? (
+                            <button
+                              onClick={() => {
+                                const currentClass = classes.find(c => c.id === student.classId);
+                                setConfirmDialog({
+                                  isOpen: true,
+                                  title: `办理学员【${student.name}】休学/结业？`,
+                                  message: (
+                                    <div className="space-y-2 text-xs text-slate-600">
+                                      <p>确定将学员 <strong className="text-slate-900">【{student.name}】</strong> 设为休学/结业状态吗？</p>
+                                      <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200 text-amber-800 space-y-1">
+                                        <div>• <strong>自动移出班级</strong>：将从所属班级【{currentClass?.name || '未分班'}】中移除</div>
+                                        <div>• <strong>扣减在读人数</strong>：班级及全校在读学生人数将不再计入该学员</div>
+                                        <div>• <strong>档案安全保留</strong>：历史测评成绩与弱项分析完好归档，后续可随时办理复学</div>
+                                      </div>
+                                    </div>
+                                  ),
+                                  confirmText: '确认移出班级并休学',
+                                  variant: 'warning',
+                                  onConfirm: () => {
+                                    suspendStudent(student.id, '在学员管理列表办理休学/结业', true);
+                                    showToast(`✅ 学员【${student.name}】已设为休学/结业，已从原班级移出且不计入班额`);
+                                  }
+                                });
+                              }}
+                              className="p-1 text-slate-400 hover:text-amber-600 rounded cursor-pointer mr-1"
+                              title="办理休学/结业 (从班级移除且不占班额)"
+                            >
+                              <UserMinus className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                const targetClassId = student.previousClassId || classes[0]?.id || '';
+                                const targetClassName = classes.find(c => c.id === targetClassId)?.name || '班级';
+                                setConfirmDialog({
+                                  isOpen: true,
+                                  title: `办理学员【${student.name}】复学？`,
+                                  message: (
+                                    <div className="space-y-2 text-xs text-slate-600">
+                                      <p>确定恢复学员 <strong className="text-slate-900">【{student.name}】</strong> 为在读状态吗？</p>
+                                      <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-800 space-y-1">
+                                        <div>• <strong>分配班级</strong>：将重新进入班级【{targetClassName}】</div>
+                                        <div>• <strong>计入在读人数</strong>：班级及全校在读人数将增加 1 人</div>
+                                      </div>
+                                    </div>
+                                  ),
+                                  confirmText: `确认复学 (入读${targetClassName})`,
+                                  variant: 'primary',
+                                  onConfirm: () => {
+                                    restoreStudent(student.id, targetClassId);
+                                    showToast(`✅ 学员【${student.name}】已成功复学，重新计入班级【${targetClassName}】`);
+                                  }
+                                });
+                              }}
+                              className="p-1 text-emerald-600 hover:text-emerald-800 rounded cursor-pointer mr-1"
+                              title="办理复学 (重新进入班级并计入人数)"
+                            >
+                              <UserCheck className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
                           <button
                             onClick={() => handleEditStudentClick(student)}
                             className="p-1 text-slate-600 hover:text-indigo-600 rounded cursor-pointer mr-1"
@@ -1217,7 +1462,7 @@ export const ManagementView: React.FC = () => {
                   </div>
                   修改此班级主授级别后，该班下所有在读学员（当前{' '}
                   <strong className="text-indigo-700 font-bold">
-                    {students.filter(s => s.classId === classForm.id).length} 人
+                    {students.filter(s => s.classId === classForm.id && s.status !== 'suspended').length} 人
                   </strong>
                   ）的【在读级别】将自动批量同步更新为【{classForm.currentLevel}】。
                 </div>
@@ -1263,7 +1508,7 @@ export const ManagementView: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-slate-900 flex items-center">
                 <GraduationCap className="w-4 h-4 mr-1.5 text-indigo-600" />
-                已开设班级列表 ({classes.length} 个班级)
+                已开设班级列表 ({classes.length} 个班级 · 全校在读 {activeStudents.length} 人)
               </h3>
 
               <button
@@ -1285,7 +1530,7 @@ export const ManagementView: React.FC = () => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {classes.map(c => {
-                const classStudentCount = students.filter(s => s.classId === c.id).length;
+                const classStudentCount = students.filter(s => s.classId === c.id && s.status !== 'suspended').length;
                 return (
                   <div
                     key={c.id}
