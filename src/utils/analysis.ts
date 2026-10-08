@@ -77,6 +77,26 @@ export function compareScoreRecordsByExamDateDesc(a: ScoreRecord, b: ScoreRecord
   return compareScoreRecordsByExamDateAsc(b, a);
 }
 
+/** Original marks remain unchanged; comparisons use a percentage of that exam's maximum. */
+export function getScorePercentage(record: Pick<ScoreRecord, 'score' | 'maxScore' | 'attendance'>): number | null {
+  const maximum = record.maxScore ?? 100; // Legacy records without a maximum used 100.
+  if (record.attendance !== 'present' || !Number.isFinite(record.score) || !Number.isFinite(maximum) || maximum <= 0 || record.score! < 0 || record.score! > maximum) return null;
+  return record.score! / maximum * 100;
+}
+
+export const roundScore = (value: number): number => Math.round((value + Number.EPSILON) * 10) / 10;
+
+export function areComparableExams(a: ScoreRecord, b: ScoreRecord): boolean {
+  return normalizeExamCategory(a.examCategory) === normalizeExamCategory(b.examCategory)
+    && (a.schoolGrade || a.level) === (b.schoolGrade || b.level);
+}
+
+export function getPercentageDelta(latest?: ScoreRecord | null, previous?: ScoreRecord | null): number | null {
+  if (!latest || !previous || !areComparableExams(latest, previous)) return null;
+  const current = getScorePercentage(latest), prior = getScorePercentage(previous);
+  return current === null || prior === null ? null : roundScore(current - prior);
+}
+
 export interface StudentProgressStats {
   studentId: string;
   studentName: string;
@@ -87,14 +107,17 @@ export interface StudentProgressStats {
   examCategory?: 'institutional' | 'public_school' | 'all';
   recordsCount: number;
   latestScore: number;
+  latestMaxScore: number;
+  latestPercentage: number;
   latestUnit: string;
   latestDate: string;
   latestExamTitle?: string;
   latestCategory: 'institutional' | 'public_school';
   previousScore?: number;
+  previousMaxScore?: number;
   previousUnit?: string;
   previousCategory?: 'institutional' | 'public_school';
-  scoreDelta: number; // positive = improved, negative = dropped (strictly compared within same category by examDate)
+  scoreDelta: number; // Percentage point change within the same category and level/grade.
   hasComparison: boolean; // whether 2+ records in this category exist
   averageScore: number;
   maxScore: number;
@@ -130,7 +153,7 @@ export function calculateStudentStats(
 
     // 1. Get all present records with numeric score for this student, sorted strictly by examDate ascending
     let records = (scoreRecords || [])
-      .filter(r => r && r.studentId === student.id && r.attendance === 'present' && typeof r.score === 'number' && !isNaN(r.score))
+      .filter(r => r && !r.isDeleted && r.studentId === student.id && getScorePercentage(r) !== null)
       .sort(compareScoreRecordsByExamDateAsc);
 
     // 2. Exam Category Filter (Institutional vs Public School)
@@ -152,29 +175,27 @@ export function calculateStudentStats(
 
     if (records.length === 0) return;
 
-    const scores = records.map(r => r.score as number);
+    const scores = records.map(r => getScorePercentage(r)!);
     const sum = scores.reduce((a, b) => a + b, 0);
     const avg = Math.round((sum / scores.length) * 10) / 10;
     const max = Math.max(...scores);
     const min = Math.min(...scores);
     const topCount = scores.filter(s => s >= 90).length;
-    const fullCount = scores.filter(s => s >= 100).length;
+    const fullCount = records.filter(r => r.score === (r.maxScore ?? 100)).length;
 
     // The chronologically latest record according to examDate
     const latest = records[records.length - 1];
     const latestCat = normalizeExamCategory(latest.examCategory);
 
     // Find previous record of the SAME category chronologically by examDate
-    const sameCategoryRecords = records.filter(r => normalizeExamCategory(r.examCategory) === latestCat);
+    const sameCategoryRecords = records.filter(r => areComparableExams(r, latest));
     let prev: ScoreRecord | undefined = undefined;
     if (sameCategoryRecords.length > 1) {
       prev = sameCategoryRecords[sameCategoryRecords.length - 2];
     }
 
     const hasComparison = prev !== undefined && typeof prev.score === 'number';
-    const delta = (prev !== undefined && typeof prev.score === 'number' && typeof latest.score === 'number')
-      ? latest.score - prev.score
-      : 0;
+    const delta = getPercentageDelta(latest, prev) ?? 0;
 
     // Aggregate weak points frequency
     const tagFreq: { [tag: string]: number } = {};
@@ -194,18 +215,21 @@ export function calculateStudentStats(
       examCategory: filters?.examCategory,
       recordsCount: records.length,
       latestScore: (latest.score as number) ?? 0,
+      latestMaxScore: latest.maxScore ?? 100,
+      latestPercentage: roundScore(getScorePercentage(latest)!),
       latestUnit: latest.unit,
       latestDate: latest.examDate,
       latestExamTitle: latest.examTitle,
       latestCategory: latestCat,
       previousScore: typeof prev?.score === 'number' ? prev.score : undefined,
+      previousMaxScore: prev ? (prev.maxScore ?? 100) : undefined,
       previousUnit: prev?.unit,
       previousCategory: prev ? normalizeExamCategory(prev.examCategory) : undefined,
       scoreDelta: delta,
       hasComparison,
       averageScore: avg,
-      maxScore: max,
-      minScore: min,
+      maxScore: roundScore(max),
+      minScore: roundScore(min),
       topScoreCount: topCount,
       fullScoreCount: fullCount,
       recentWeakPoints: Array.isArray(latest.weakPoints) ? latest.weakPoints : [],

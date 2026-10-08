@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { ConfirmDialog } from './ConfirmDialog';
+import { EntryRowState, emptyEntryRow, hasEntryInput, isValidScoreInput, fillEmptyScores, sameExam, entryDraftKey, readEntryDraft, restoreEntryRows, getLocalDate } from '../utils/scoreEntry';
+import { getScorePercentage, getPercentageDelta, areComparableExams } from '../utils/analysis';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { ScoreRecord, Student } from '../types';
 import { CloudSyncButtons } from './CloudSyncButtons';
@@ -33,17 +36,6 @@ import {
   ExternalLink
 } from 'lucide-react';
 
-interface EntryRowState {
-  student: Student;
-  schoolGrade: string;
-  score: string;
-  attendance: 'present' | 'absent' | 'leave';
-  weakPoints: string[];
-  mistakeDetails: string;
-  teacherRemark: string;
-  isExpanded: boolean;
-}
-
 export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNavigateToRanking?: () => void }> = ({
   onNavigateToQuery,
   onNavigateToRanking
@@ -63,11 +55,15 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
     manualRefreshFromCloud
   } = useApp();
 
-  const [examCategory, setExamCategory] = useState<'institutional' | 'public_school'>('institutional');
-  const [selectedClassId, setSelectedClassId] = useState<string>(() => classes?.[0]?.id || '');
+  const [examCategory, setExamCategory] = useState<'institutional' | 'public_school'>(() => {
+    try { return JSON.parse(localStorage.getItem('beaverscore_entry_selection_v1') || '{}').examCategory === 'public_school' ? 'public_school' : 'institutional'; } catch { return 'institutional'; }
+  });
+  const [selectedClassId, setSelectedClassId] = useState<string>(() => {
+    try { const saved = JSON.parse(localStorage.getItem('beaverscore_entry_selection_v1') || '{}').selectedClassId; return classes.some(c => c.id === saved) ? saved : classes[0]?.id || ''; } catch { return classes[0]?.id || ''; }
+  });
   const [selectedLevel, setSelectedLevel] = useState<string>('BF1');
   const [selectedUnit, setSelectedUnit] = useState<string>('U1 (Unit 1)');
-  const [examDate, setExamDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [examDate, setExamDate] = useState<string>(() => getLocalDate());
   const [maxScore, setMaxScore] = useState<number>(100);
   const [selectedTeacher, setSelectedTeacher] = useState<string>('');
   const [isRefreshingCloud, setIsRefreshingCloud] = useState<boolean>(false);
@@ -82,7 +78,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
 
   const [rows, setRows] = useState<EntryRowState[]>([]);
   const [batchDefaultScore, setBatchDefaultScore] = useState<string>('85');
-  const [batchDefaultGrade, setBatchDefaultGrade] = useState<string>('三上');
+  const [batchDefaultGrade, setBatchDefaultGrade] = useState<string>('');
   const [savedSuccessModal, setSavedSuccessModal] = useState<{
     count: number;
     scoredCount: number;
@@ -119,41 +115,43 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
     }
   };
 
-  useEffect(() => {
-    const currentCls = (classes || []).find(c => c.id === selectedClassId);
-    if (currentCls) {
-      setSelectedLevel(currentCls.level || levels?.[0] || 'BF1');
-      setSelectedTeacher(currentCls.teacherName || teachers?.[0] || '');
-      if (examCategory === 'public_school') {
-        setSelectedUnit(prev => (PUBLIC_SCHOOL_EXAM_UNITS.includes(prev) ? prev : PUBLIC_SCHOOL_EXAM_UNITS[0]));
-      } else {
-        setSelectedUnit(prev => (units.includes(prev) ? prev : (units[0] || 'U1 (Unit 1)')));
-      }
-    }
-  }, [selectedClassId, classes, examCategory]);
+  const draftKey = entryDraftKey(selectedClassId, examCategory);
+  const [loadedDraftKey, setLoadedDraftKey] = useState('');
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
+  const savingRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [saveReview, setSaveReview] = useState<{ cloud: boolean; duplicates: number; count: number } | null>(null);
 
   useEffect(() => {
     if (!selectedClassId) {
-      if (classes?.length > 0) {
-        setSelectedClassId(classes[0].id);
-      }
+      if (classes.length) setSelectedClassId(classes[0].id);
       return;
     }
-    const classStudents = (students || []).filter(s => s.classId === selectedClassId && s.status !== 'suspended');
+    const currentCls = classes.find(c => c.id === selectedClassId);
+    const changedClass = loadedDraftKey !== draftKey;
+    const draft = changedClass ? readEntryDraft(draftKey) : null;
+    if (changedClass) {
+      setSelectedLevel(draft?.selectedLevel || currentCls?.currentLevel || currentCls?.level || levels[0] || 'BF1');
+      setSelectedTeacher(draft?.selectedTeacher || currentCls?.teacherName || teachers[0] || '');
+      const allowedUnits = examCategory === 'public_school' ? PUBLIC_SCHOOL_EXAM_UNITS : units;
+      setSelectedUnit(allowedUnits.includes(draft?.selectedUnit) ? draft.selectedUnit : allowedUnits[0] || 'U1 (Unit 1)');
+      setExamDate(draft?.examDate || getLocalDate());
+      setMaxScore([50,100,120,150].includes(draft?.maxScore) ? draft.maxScore : 100);
+    }
+    const roster = students.filter(student => student.classId === selectedClassId && student.status !== 'suspended');
+    setRows(previous => restoreEntryRows(roster, changedClass ? draft?.rows : previous));
+    setLoadedDraftKey(draftKey);
+  }, [selectedClassId, examCategory, students, classes]);
 
-    const initialRows: EntryRowState[] = classStudents.map(student => ({
-      student,
-      schoolGrade: student.schoolGrade || '三上',
-      score: '',
-      attendance: 'present',
-      weakPoints: [],
-      mistakeDetails: '',
-      teacherRemark: '',
-      isExpanded: false
-    }));
-
-    setRows(initialRows);
-  }, [selectedClassId, students, classes]);
+  useEffect(() => {
+    if (loadedDraftKey !== draftKey) return; // Never write the previous class's rows under the new key.
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({ rows, selectedLevel, selectedUnit, selectedTeacher, examDate, maxScore }));
+      localStorage.setItem('beaverscore_entry_selection_v1', JSON.stringify({ selectedClassId, examCategory }));
+    } catch { showToast('浏览器未能保存草稿，请勿刷新页面，并及时导出备份', 'error'); }
+  }, [rows, draftKey, loadedDraftKey, selectedLevel, selectedUnit, selectedTeacher, examDate, maxScore]);
 
   const getStudentPreviousScore = (studentId: string) => {
     const currentExamTs = getExamDateTimestamp(examDate) || Date.now();
@@ -165,18 +163,13 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
           r.attendance === 'present' &&
           typeof r.score === 'number' &&
           !isNaN(r.score) &&
-          normalizeExamCategory(r.examCategory) === examCategory
+          normalizeExamCategory(r.examCategory) === examCategory && (r.schoolGrade || r.level) === (examCategory === 'public_school' ? rows.find(row => row.student.id === studentId)?.schoolGrade : selectedLevel)
       )
       .sort(compareScoreRecordsByExamDateAsc);
 
     const priorRecords = records.filter(r => getExamDateTimestamp(r.examDate) < currentExamTs);
     if (priorRecords.length > 0) {
       return priorRecords[priorRecords.length - 1];
-    }
-
-    const sameDateRecords = records.filter(r => getExamDateTimestamp(r.examDate) === currentExamTs);
-    if (sameDateRecords.length > 0) {
-      return sameDateRecords[sameDateRecords.length - 1];
     }
 
     return null;
@@ -229,13 +222,12 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
   };
 
   const handleBatchFillScores = () => {
-    if (isNaN(Number(batchDefaultScore))) return;
-    const updated = rows.map(r => ({
-      ...r,
-      score: r.attendance === 'present' ? batchDefaultScore : r.score
-    }));
-    setRows(updated);
-    showToast(`已为所有出考学生预填参考分 ${batchDefaultScore} 分`, 'info');
+    if (!isValidScoreInput(batchDefaultScore, maxScore)) {
+      showToast(`预填分数必须在 0 到 ${maxScore} 分之间`, 'error');
+      return;
+    }
+    setRows(previous => fillEmptyScores(previous, batchDefaultScore, maxScore));
+    showToast('已填入空白成绩，已有成绩已保留', 'info');
   };
 
   const handleBatchFillSchoolGrade = () => {
@@ -248,7 +240,8 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
     showToast(`已一键将全班学员的公校年级设为【${batchDefaultGrade}】`, 'success');
   };
 
-  const handleSaveScoreBatch = async (syncToCloud: boolean = true) => {
+  const handleSaveScoreBatch = async (syncToCloud: boolean = true, duplicateMode?: 'update' | 'retest') => {
+    if (savingRef.current) return;
     if (!selectedClassId) {
       showToast('请先选择需要录入成绩的班级', 'error');
       return;
@@ -259,6 +252,8 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
       return;
     }
 
+    const invalidRow = rows.find(row => row.attendance === 'present' && row.score.trim() !== '' && !isValidScoreInput(row.score, maxScore));
+    if (invalidRow) { showToast(`${invalidRow.student.name}的成绩必须在 0 到 ${maxScore} 分之间`, 'error'); return; }
     const actionableRows = rows.filter(
       r => r.attendance !== 'present' || (r.score.trim() !== '' && !isNaN(Number(r.score)))
     );
@@ -268,12 +263,15 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
       return;
     }
 
+    if (examCategory === 'public_school' && actionableRows.some(row => !PUBLIC_SCHOOL_GRADES.includes(row.schoolGrade))) {
+      showToast('请为本次保存的每位学员选择正确的公校年级', 'error'); return;
+    }
     const currentCls = classes.find(c => c.id === selectedClassId);
     const className = currentCls?.name || '未知班级';
-    const batchId = `batch_${Date.now()}`;
+    const batchId = `batch_${crypto.randomUUID()}`;
 
     const newRecords: Omit<ScoreRecord, 'id' | 'recordedAt'>[] = actionableRows.map(r => {
-      const studentGrade = r.schoolGrade || r.student.schoolGrade || '三上';
+      const studentGrade = r.schoolGrade || r.student.schoolGrade || '';
       const recordLevel = examCategory === 'public_school' ? studentGrade : selectedLevel;
       const computedTitle = formatExamTitle({
         examCategory,
@@ -304,10 +302,35 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
       };
     });
 
-    const syncResult = await addScoreBatchAndSync(newRecords, {
-      syncToCloud,
-      teacherName: selectedTeacher || gistConfig.teacherName
-    });
+    const duplicates = newRecords.filter(record => scoreRecords.some(existing => sameExam(existing, record))).length;
+    if (duplicates > 0 && !duplicateMode) {
+      setSaveReview({ cloud: syncToCloud, duplicates, count: newRecords.length });
+      return;
+    }
+    const savedKey = draftKey;
+    const savedRows = rows;
+    savingRef.current = true;
+    setIsSaving(true);
+    setSaveReview(null);
+    let syncResult;
+    try {
+      syncResult = await addScoreBatchAndSync(newRecords, {
+        syncToCloud, duplicateMode,
+        teacherName: selectedTeacher || gistConfig.teacherName
+      });
+      // Only clear rows actually saved; edits made during the network request survive.
+      if (draftKeyRef.current === savedKey) setRows(current => current.map(row => {
+        const saved = savedRows.find(old => old.student.id === row.student.id);
+        return saved && JSON.stringify(saved) === JSON.stringify(row) && actionableRows.some(item => item.student.id === row.student.id)
+          ? emptyEntryRow(row.student) : row;
+      }));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '保存失败，请保留草稿重试', 'error');
+      return;
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
 
     const presentScores = newRecords
       .filter(r => r.attendance === 'present' && typeof r.score === 'number' && !isNaN(r.score))
@@ -321,7 +344,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
     const absentCount = newRecords.filter(r => r.attendance !== 'present').length;
     const skippedCount = rows.length - newRecords.length;
 
-    if (avg >= 85 || highestScore >= 95) {
+    if (avg / maxScore * 100 >= 85 || highestScore / maxScore * 100 >= 95) {
       try {
         confetti({
           particleCount: 80,
@@ -353,18 +376,11 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
     handleSaveScoreBatch(isCloudConnected);
   };
 
-  const handleResetForm = () => {
+  const handleResetForm = (confirmed: boolean = false) => {
+    if (!confirmed && rows.some(hasEntryInput)) { setConfirmClear(true); return; }
+    setConfirmClear(false);
     setSavedSuccessModal(null);
-    setRows(prev =>
-      prev.map(r => ({
-        ...r,
-        score: '',
-        weakPoints: [],
-        mistakeDetails: '',
-        teacherRemark: '',
-        isExpanded: false
-      }))
-    );
+    setRows(previous => previous.map(row => emptyEntryRow(row.student)));
     showToast('已清空重置当前录入表单的所有成绩与标记！', 'info');
   };
 
@@ -721,6 +737,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                 onChange={e => setBatchDefaultGrade(e.target.value)}
                 className="px-2 py-0.5 bg-white border border-emerald-300 rounded text-emerald-900 font-bold cursor-pointer"
               >
+                <option value="">请选择公校年级</option>
                 {PUBLIC_SCHOOL_GRADES.map(g => (
                   <option key={g} value={g}>
                     {g}
@@ -791,14 +808,14 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                     const prevRecord = getStudentPreviousScore(row.student.id);
                     const currentScoreNum = row.attendance === 'present' && row.score !== '' ? Number(row.score) : null;
                     const delta = currentScoreNum !== null && prevRecord && typeof prevRecord.score === 'number'
-                      ? currentScoreNum - prevRecord.score
+                      ? getPercentageDelta({ ...prevRecord, score: currentScoreNum, maxScore }, prevRecord)
                       : null;
 
                     let scoreBadgeColor = 'border-slate-300 focus:ring-indigo-500';
                     if (currentScoreNum !== null) {
-                      if (currentScoreNum >= 90) scoreBadgeColor = 'border-emerald-400 bg-emerald-50/30 text-emerald-900 font-bold';
-                      else if (currentScoreNum >= 80) scoreBadgeColor = 'border-blue-400 bg-blue-50/30 text-blue-900 font-semibold';
-                      else if (currentScoreNum >= 60) scoreBadgeColor = 'border-amber-400 bg-amber-50/30 text-amber-900';
+                      if (currentScoreNum / maxScore * 100 >= 90) scoreBadgeColor = 'border-emerald-400 bg-emerald-50/30 text-emerald-900 font-bold';
+                      else if (currentScoreNum / maxScore * 100 >= 80) scoreBadgeColor = 'border-blue-400 bg-blue-50/30 text-blue-900 font-semibold';
+                      else if (currentScoreNum / maxScore * 100 >= 60) scoreBadgeColor = 'border-amber-400 bg-amber-50/30 text-amber-900';
                       else scoreBadgeColor = 'border-rose-400 bg-rose-50/30 text-rose-900 font-bold';
                     }
 
@@ -839,7 +856,8 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                                   onChange={e => handleRowSchoolGradeChange(idx, e.target.value)}
                                   className="text-xs font-bold px-2 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer shadow-2xs hover:bg-emerald-100/70 transition"
                                 >
-                                  {PUBLIC_SCHOOL_GRADES.map(g => (
+                                  <option value="">请选择公校年级</option>
+                {PUBLIC_SCHOOL_GRADES.map(g => (
                                     <option key={g} value={g}>
                                       {g}
                                     </option>
@@ -873,6 +891,15 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                                 <input
                                   type="text"
                                   id={`input-score-${row.student.id}`}
+                                  data-score-entry="true"
+                                  inputMode="decimal"
+                                  onKeyDown={event => {
+                                    if (event.key !== 'Enter') return;
+                                    event.preventDefault();
+                                    const form = event.currentTarget.form as HTMLFormElement | null;
+                                    const inputs = form ? Array.from(form.querySelectorAll<HTMLInputElement>('input[data-score-entry]:not(:disabled)')) : [];
+                                    inputs[inputs.indexOf(event.currentTarget) + 1]?.focus();
+                                  }}
                                   disabled={row.attendance !== 'present'}
                                   value={row.attendance === 'present' ? row.score : ''}
                                   onChange={e => handleRowScoreChange(idx, e.target.value)}
@@ -913,19 +940,19 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                                     {prevRecord.level}
                                   </span>
                                   <span>{prevRecord.unit}:</span>
-                                  <strong className="text-slate-800">{prevRecord.score}分</strong>
+                                  <strong className="text-slate-800">{prevRecord.score}/{prevRecord.maxScore ?? 100}分</strong>
                                 </div>
                                 {delta !== null && (
                                   <div className="mt-0.5 flex items-center font-semibold">
                                     {delta > 0 ? (
                                       <span className="text-emerald-600 flex items-center">
                                         <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-                                        提升 +{delta} 分
+                                        得分率提升 +{delta} 个百分点
                                       </span>
                                     ) : delta < 0 ? (
                                       <span className="text-rose-600 flex items-center">
                                         <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />
-                                        下滑 {delta} 分
+                                        得分率下滑 {delta} 个百分点
                                       </span>
                                     ) : (
                                       <span className="text-slate-400 flex items-center">
@@ -1070,7 +1097,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                   <div className="flex flex-wrap items-center gap-2.5">
                     <button
                       type="button"
-                      onClick={handleResetForm}
+                      onClick={() => handleResetForm()}
                       className="px-3.5 py-2 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-100 transition cursor-pointer"
                     >
                       清空重置
@@ -1080,9 +1107,9 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                       <button
                         type="button"
                         onClick={() => handleSaveScoreBatch(false)}
-                        disabled={willSaveTotal === 0 || isSyncingGist}
+                        disabled={willSaveTotal === 0 || isSyncingGist || isSaving}
                         className="px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-700 font-medium text-xs rounded-lg transition flex items-center cursor-pointer"
-                        title="仅保存在当前电脑浏览器，不上载至云端"
+                        title="不参与自动同步；以后点击云端上传可明确发布这些成绩"
                       >
                         <Save className="w-3.5 h-3.5 mr-1 text-slate-500" />
                         仅存本地
@@ -1093,7 +1120,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                       type="button"
                       id="btn-submit-score-batch"
                       onClick={() => handleSaveScoreBatch(isCloudConnected)}
-                      disabled={willSaveTotal === 0 || isSyncingGist}
+                      disabled={willSaveTotal === 0 || isSyncingGist || isSaving}
                       className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold text-xs sm:text-sm rounded-lg shadow-sm hover:shadow transition flex items-center cursor-pointer"
                     >
                       {isSyncingGist ? (
@@ -1329,7 +1356,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
 
             <button
               type="button"
-              onClick={handleResetForm}
+              onClick={() => handleResetForm()}
               className="mt-3 w-full py-1.5 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
             >
               继续录入下一个班级

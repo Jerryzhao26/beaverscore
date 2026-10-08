@@ -23,6 +23,8 @@ export interface GistSyncResult {
   success: boolean;
   message: string;
   data?: any;
+  changeFiles?: string[];
+  completeRead?: boolean; // All base and immutable change files were read successfully.
   gistId?: string;
   updatedAt?: string;
   gistUrl?: string;
@@ -302,6 +304,26 @@ export function mergeData<T extends { id: string; updatedAt?: number | string; i
 /**
  * 完整数据集双向合并函数：采用时间戳与软删除算法合并班级、学员、成绩及字典数据
  */
+export function mergeTimestampMaps(a: Record<string, number> = {}, b: Record<string, number> = {}): Record<string, number> {
+  const merged = { ...a };
+  for (const [key, value] of Object.entries(b)) merged[key] = Math.max(Number(merged[key]) || 0, Number(value) || 0);
+  return merged;
+}
+
+// Compare persisted data only (exportedAt changes on every read).
+export function canonicalJson(value: any): string {
+  const canonical = (item: any): any => {
+    if (Array.isArray(item)) return item.map(canonical).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    if (item && typeof item === 'object') return Object.fromEntries(Object.keys(item).sort().filter(key => item[key] !== undefined).map(key => [key, canonical(item[key])]));
+    return item;
+  };
+  return JSON.stringify(canonical(value));
+}
+export function databaseEquals(a: any, b: any): boolean {
+  const keys = ['classes', 'students', 'scoreRecords', 'levels', 'units', 'teachers', 'weakPointCategories', 'deletedEntities', 'dictionaryAddedAt'];
+  return keys.every(key => canonicalJson(a?.[key]) === canonicalJson(b?.[key]));
+}
+
 export function mergeDatasets(localData: any, remoteData: any): { merged: any; report: MergeReport } {
   const report: MergeReport = {
     incomingScoresCount: 0,
@@ -525,19 +547,19 @@ export function mergeDatasets(localData: any, remoteData: any): { merged: any; r
 
   // 合并删除字典记录
   const mergedDeletedEntities = {
-    levels: { ...(localDeleted.levels || {}), ...(remoteDeleted.levels || {}) },
-    units: { ...(localDeleted.units || {}), ...(remoteDeleted.units || {}) },
-    teachers: { ...(localDeleted.teachers || {}), ...(remoteDeleted.teachers || {}) },
-    tags: { ...(localDeleted.tags || {}), ...(remoteDeleted.tags || {}) },
-    weakPointCategories: { ...(localDeleted.weakPointCategories || {}), ...(remoteDeleted.weakPointCategories || {}) },
+    levels: mergeTimestampMaps(localDeleted.levels, remoteDeleted.levels),
+    units: mergeTimestampMaps(localDeleted.units, remoteDeleted.units),
+    teachers: mergeTimestampMaps(localDeleted.teachers, remoteDeleted.teachers),
+    tags: mergeTimestampMaps(localDeleted.tags, remoteDeleted.tags),
+    weakPointCategories: mergeTimestampMaps(localDeleted.weakPointCategories, remoteDeleted.weakPointCategories),
   };
 
   // 合并新增字典记录
   const mergedDictionaryAddedAt = {
-    levels: { ...(localAdded.levels || {}), ...(remoteAdded.levels || {}) },
-    units: { ...(localAdded.units || {}), ...(remoteAdded.units || {}) },
-    teachers: { ...(localAdded.teachers || {}), ...(remoteAdded.teachers || {}) },
-    tags: { ...(localAdded.tags || {}), ...(remoteAdded.tags || {}) },
+    levels: mergeTimestampMaps(localAdded.levels, remoteAdded.levels),
+    units: mergeTimestampMaps(localAdded.units, remoteAdded.units),
+    teachers: mergeTimestampMaps(localAdded.teachers, remoteAdded.teachers),
+    tags: mergeTimestampMaps(localAdded.tags, remoteAdded.tags),
   };
 
   const mergeDictionaryList = (
@@ -748,7 +770,8 @@ export async function pushDataToGist(
   token: string,
   gistId: string,
   fullData: any,
-  filename: string = DEFAULT_GIST_FILENAME
+  filename: string = DEFAULT_GIST_FILENAME,
+  removeFiles: string[] = []
 ): Promise<GistSyncResult> {
   const cleanToken = token.trim();
   const cleanGistId = extractGistId(gistId);
@@ -764,6 +787,7 @@ export async function pushDataToGist(
     const payload = {
       description: `EduTrack Pro 成绩数据库 (最后更新于: ${new Date().toLocaleString('zh-CN')})`,
       files: {
+        ...Object.fromEntries(removeFiles.map(name => [name, null])),
         [filename]: {
           content: JSON.stringify(fullData, null, 2),
         },
@@ -888,8 +912,6 @@ export async function pullDataFromGist(
         headers,
       });
     } catch (fetchErr: any) {
-      const rawRes = await fetchFromRawUrlFallback(cleanGistId, filename);
-      if (rawRes.success) return rawRes;
       throw fetchErr;
     }
 
@@ -897,73 +919,56 @@ export async function pullDataFromGist(
       const errJson = await res.json().catch(() => null);
       const errMsg = errJson?.message || `HTTP ${res.status}: ${res.statusText}`;
       if (res.status === 404) {
-        const rawRes = await fetchFromRawUrlFallback(cleanGistId, filename);
-        if (rawRes.success) return rawRes;
         return {
           success: false,
           message: '未找到指定 Gist，请检查 Gist ID 是否正确；若为私有 Gist 请提供具备 gist 权限的 GitHub Token'
         };
       }
       if (res.status === 403) {
-        const rawRes = await fetchFromRawUrlFallback(cleanGistId, filename);
-        if (rawRes.success) return rawRes;
         return { success: false, message: `GitHub API 访问频次受限 (${errMsg})，建议填写 GitHub Token` };
       }
       return { success: false, message: `从 Gist 拉取失败: ${errMsg}` };
     }
 
     const json = await res.json();
+    if (json.truncated) return { success: false, message: '云端文件列表不完整，已停止同步。请先导出备份并整理云端历史。' };
     const files = json.files || {};
     
-    let targetFile = files[filename];
-    if (!targetFile) {
-      const jsonKey = Object.keys(files).find(k => k.endsWith('.json'));
-      if (jsonKey) {
-        targetFile = files[jsonKey];
+    const changePrefix = `${filename}.changes.`;
+    const baseName = files[filename] ? filename : Object.keys(files).find(k => k.endsWith('.json') && !k.includes('.changes.'));
+    if (!baseName) return { success: false, message: `Gist 中未找到基础数据文件（期望: ${filename}）` };
+
+    const readFile = async (name: string) => {
+      const file = files[name];
+      let content = file.content;
+      if (file.truncated || typeof content !== 'string') {
+        if (!file.raw_url) throw new Error(`无法完整读取数据文件: ${name}`);
+        const raw = await fetch(`${file.raw_url}${file.raw_url.includes('?') ? '&' : '?'}_t=${Date.now()}`);
+        if (!raw.ok) throw new Error(`读取数据文件失败: ${name} (HTTP ${raw.status})`);
+        content = await raw.text();
       }
-    }
-
-    if (!targetFile) {
-      return { success: false, message: `Gist 中未找到可用的 JSON 数据文件（期望: ${filename}）` };
-    }
-
-    let fileContent = targetFile.content;
-    if (targetFile.truncated && targetFile.raw_url) {
-      const rawUrlWithTimestamp = targetFile.raw_url.includes('?')
-        ? `${targetFile.raw_url}&_t=${Date.now()}`
-        : `${targetFile.raw_url}?_t=${Date.now()}`;
-      const rawRes = await fetch(rawUrlWithTimestamp);
-      if (!rawRes.ok) {
-        throw new Error(`无法获取截断的大文件数据 (HTTP ${rawRes.status})`);
+      const data = JSON.parse(content);
+      if (!data || !['classes', 'students', 'scoreRecords'].some(key => Array.isArray(data[key]))) {
+        throw new Error(`数据文件格式不符合要求: ${name}`);
       }
-      fileContent = await rawRes.text();
-    }
-
-    if (!fileContent) {
-      return { success: false, message: 'Gist 数据文件内容为空' };
-    }
-
-    const parsed = JSON.parse(fileContent);
-
-    if (!parsed || (!parsed.classes && !parsed.students && !parsed.scoreRecords)) {
-      return {
-        success: false,
-        message: 'Gist 文件格式不符合要求（未检测到班级或学员数据结构）',
-      };
-    }
+      return data;
+    };
+    let parsed = await readFile(baseName);
+    const changeNames = Object.keys(files).filter(k => k.startsWith(changePrefix)).sort();
+    // Read sequentially to avoid flooding the API for large histories. Never silently skip a failed change.
+    for (const name of changeNames) parsed = mergeDatasets(parsed, await readFile(name)).merged;
 
     return {
       success: true,
       message: '✅ 成功从 GitHub Gist 拉取最新数据！',
       data: parsed,
+      completeRead: true,
+      changeFiles: changeNames,
       gistId: cleanGistId,
       gistUrl: json.html_url,
       updatedAt: json.updated_at || new Date().toISOString(),
     };
   } catch (err: any) {
-    const rawRes = await fetchFromRawUrlFallback(cleanGistId, filename);
-    if (rawRes.success) return rawRes;
-
     const friendly = formatFriendlyNetworkError(err.message || '网络连接异常');
     return {
       success: false,
@@ -979,7 +984,8 @@ export async function pushDataToGistWithSmartMerge(
   token: string,
   gistId: string,
   localData: any,
-  filename: string = DEFAULT_GIST_FILENAME
+  filename: string = DEFAULT_GIST_FILENAME,
+  includeLocalOnly: boolean = false
 ): Promise<GistSyncResult & { report?: MergeReport }> {
   const cleanToken = token.trim();
   const cleanGistId = extractGistId(gistId);
@@ -994,20 +1000,28 @@ export async function pushDataToGistWithSmartMerge(
   try {
     const remoteResult = await pullDataFromGist(cleanToken, cleanGistId, filename);
 
-    let finalDataToPush = localData;
-    let mergeReport: MergeReport | undefined = undefined;
-
-    if (remoteResult.success && remoteResult.data) {
-      const { merged, report } = mergeDatasets(localData, remoteResult.data);
-      finalDataToPush = merged;
-      mergeReport = report;
+    if (!remoteResult.success || !remoteResult.data || !remoteResult.completeRead) {
+      return { success: false, message: `未能完整读取云端，已停止上传以保护现有数据。${remoteResult.message}` };
     }
-
-    const pushResult = await pushDataToGist(cleanToken, cleanGistId, finalDataToPush, filename);
-
-    if (!pushResult.success) {
-      return pushResult;
+    const cloudLocal = { ...localData, scoreRecords: (localData.scoreRecords || [])
+      .filter((r: ScoreRecord) => includeLocalOnly || !r.localOnly)
+      .map((r: ScoreRecord) => includeLocalOnly ? { ...r, localOnly: false } : r) };
+    const { merged: cloudMerged, report: mergeReport } = mergeDatasets(cloudLocal, remoteResult.data);
+    const delta = { ...cloudMerged };
+    for (const key of ['classes', 'students', 'scoreRecords']) {
+      const existing = new Map((remoteResult.data[key] || []).map((item: any) => [item.id, item]));
+      delta[key] = (cloudMerged[key] || []).filter((item: any) => canonicalJson(item) !== canonicalJson(existing.get(item.id)));
     }
+    const finalDataToPush = includeLocalOnly ? cloudMerged : mergeDatasets(localData, cloudMerged).merged;
+    const changed = !databaseEquals(cloudMerged, mergeDatasets(remoteResult.data, remoteResult.data).merged);
+    if (!changed) return { ...remoteResult, data: finalDataToPush, report: mergeReport, message: '✅ 云端数据已是最新，无需重复上传。' };
+    // Unique files make concurrent submissions independent. A shared full-file PATCH cannot be atomic.
+    const changeName = `${filename}.changes.${Date.now()}-${crypto.randomUUID()}.json`;
+    const compact = (remoteResult.changeFiles?.length || 0) >= 50;
+    // Compact only the files included in this read. Concurrent new files remain untouched.
+    // Concurrent checkpoints are also safe: each has a unique name and merges by record timestamps.
+    const pushResult = await pushDataToGist(cleanToken, cleanGistId, compact ? cloudMerged : delta, changeName, compact ? remoteResult.changeFiles : []);
+    if (!pushResult.success) return pushResult;
 
     let summaryMsg = '✅ 数据已成功同步推送到 GitHub Gist！';
     if (mergeReport && mergeReport.incomingScoresCount > 0) {

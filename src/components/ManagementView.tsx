@@ -34,7 +34,6 @@ import {
   BookOpen,
   Award
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 
 export const ManagementView: React.FC = () => {
   const {
@@ -489,9 +488,10 @@ export const ManagementView: React.FC = () => {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = evt => {
+    reader.onload = async evt => {
       try {
         const data = evt.target?.result;
+        const XLSX = await import('xlsx');
         const workbook = XLSX.read(data, { type: 'binary' });
         const sheetName = workbook.SheetNames[0];
         const rows: any[] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
@@ -563,7 +563,7 @@ export const ManagementView: React.FC = () => {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = evt => {
+    reader.onload = async evt => {
       try {
         const text = evt.target?.result as string;
         setConfirmDialog({

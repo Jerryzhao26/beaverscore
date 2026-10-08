@@ -35,6 +35,7 @@ export interface ClassGroup {
 }
 
 export interface ScoreRecord {
+  localOnly?: boolean; // Excluded from automatic sync until an explicit cloud upload.
   id: string;
   classId: string;
   className: string;
