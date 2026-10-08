@@ -1,3 +1,4 @@
+import { prepareScoreBatch } from '../utils/scoreEntry';
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import { Student, ClassGroup, ScoreRecord, WeakPointTagCategory, SyncLogEntry, SyncNotificationData } from '../types';
 import {
@@ -21,6 +22,8 @@ import {
   pushDataToGistWithSmartMerge,
   mergeDatasets,
   mergeData,
+  mergeTimestampMaps,
+  databaseEquals,
   parseGistUrlParams,
   generateGistShareUrl,
   DEFAULT_GIST_FILENAME,
@@ -80,7 +83,7 @@ interface AppContextType {
   addScoreBatch: (records: Omit<ScoreRecord, 'id' | 'recordedAt'>[]) => void;
   addScoreBatchAndSync: (
     records: Omit<ScoreRecord, 'id' | 'recordedAt'>[],
-    options?: { syncToCloud?: boolean; teacherName?: string }
+    options?: { syncToCloud?: boolean; teacherName?: string; duplicateMode?: 'update' | 'retest' }
   ) => Promise<ScoreBatchSyncResult>;
   updateScoreRecord: (id: string, updated: Partial<ScoreRecord>) => void;
   deleteScoreRecord: (id: string) => void;
@@ -441,8 +444,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
-  const applyMergedData = (data: any) => {
+  const applyMergedData = (data: any, replace: boolean = false) => {
     if (!data) return;
+    // Network responses must not replace changes made locally while a request was in flight.
+    if (!replace) data = mergeDatasets(getFullDatabaseObject(), data).merged;
 
     if (Array.isArray(data.classes)) {
       const normalized = data.classes.map(normalizeClass);
@@ -487,11 +492,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     if (data.deletedEntities && typeof data.deletedEntities === 'object') {
       const nextDeleted = {
-        levels: { ...(deletedEntitiesRef.current.levels || {}), ...(data.deletedEntities.levels || {}) },
-        units: { ...(deletedEntitiesRef.current.units || {}), ...(data.deletedEntities.units || {}) },
-        teachers: { ...(deletedEntitiesRef.current.teachers || {}), ...(data.deletedEntities.teachers || {}) },
-        tags: { ...(deletedEntitiesRef.current.tags || {}), ...(data.deletedEntities.tags || {}) },
-        weakPointCategories: { ...(deletedEntitiesRef.current.weakPointCategories || {}), ...(data.deletedEntities.weakPointCategories || {}) },
+        levels: mergeTimestampMaps(deletedEntitiesRef.current.levels, data.deletedEntities.levels),
+        units: mergeTimestampMaps(deletedEntitiesRef.current.units, data.deletedEntities.units),
+        teachers: mergeTimestampMaps(deletedEntitiesRef.current.teachers, data.deletedEntities.teachers),
+        tags: mergeTimestampMaps(deletedEntitiesRef.current.tags, data.deletedEntities.tags),
+        weakPointCategories: mergeTimestampMaps(deletedEntitiesRef.current.weakPointCategories, data.deletedEntities.weakPointCategories),
       };
       deletedEntitiesRef.current = nextDeleted;
       setDeletedEntities(nextDeleted);
@@ -499,10 +504,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     if (data.dictionaryAddedAt && typeof data.dictionaryAddedAt === 'object') {
       const nextAdded = {
-        levels: { ...(dictionaryAddedAtRef.current.levels || {}), ...(data.dictionaryAddedAt.levels || {}) },
-        units: { ...(dictionaryAddedAtRef.current.units || {}), ...(data.dictionaryAddedAt.units || {}) },
-        teachers: { ...(dictionaryAddedAtRef.current.teachers || {}), ...(data.dictionaryAddedAt.teachers || {}) },
-        tags: { ...(dictionaryAddedAtRef.current.tags || {}), ...(data.dictionaryAddedAt.tags || {}) },
+        levels: mergeTimestampMaps(dictionaryAddedAtRef.current.levels, data.dictionaryAddedAt.levels),
+        units: mergeTimestampMaps(dictionaryAddedAtRef.current.units, data.dictionaryAddedAt.units),
+        teachers: mergeTimestampMaps(dictionaryAddedAtRef.current.teachers, data.dictionaryAddedAt.teachers),
+        tags: mergeTimestampMaps(dictionaryAddedAtRef.current.tags, data.dictionaryAddedAt.tags),
       };
       dictionaryAddedAtRef.current = nextAdded;
       setDictionaryAddedAt(nextAdded);
@@ -521,8 +526,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIsSyncingGist(true);
     setGistLastMessage('正在执行多端智能合并与云端同步...');
     try {
+      if (rawScoreRecordsRef.current.some(record => record.localOnly)) {
+        const published = rawScoreRecordsRef.current.map(record => record.localOnly
+          ? { ...record, localOnly: false, updatedAt: Math.max(Date.now(), (record.updatedAt || 0) + 1) } : record);
+        rawScoreRecordsRef.current = published;
+        setRawScoreRecords(published);
+        localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(published));
+      }
       const fullData = getFullDatabaseObject();
-      const res = await pushDataToGistWithSmartMerge(tokenToUse, gistIdToUse, fullData, filenameToUse);
+      const res = await pushDataToGistWithSmartMerge(tokenToUse, gistIdToUse, fullData, filenameToUse, true);
       if (res.success) {
         if (res.data) {
           applyMergedData(res.data);
@@ -652,7 +664,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const currentLocal = getFullDatabaseObject();
         const { merged, report } = mergeDatasets(currentLocal, res.data);
         applyMergedData(merged);
-        if (report.incomingScoresCount > 0 || report.incomingStudentsCount > 0 || report.incomingClassesCount > 0) {
+        if (!databaseEquals(currentLocal, merged)) {
           setLatestMergeReport(report);
         }
 
@@ -674,9 +686,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             totalRecordsCount: report.totalScoresCount || scoreRecords.length
           });
 
-          const hasChanges = (report.incomingScoresCount && report.incomingScoresCount > 0) ||
-            (report.incomingStudentsCount && report.incomingStudentsCount > 0) ||
-            (report.incomingClassesCount && report.incomingClassesCount > 0);
+          const hasChanges = !databaseEquals(currentLocal, merged);
 
           showSyncNotification({
             id: `sync_pull_${Date.now()}`,
@@ -759,7 +769,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await pullDataFromGist(tokenToUse, gistIdToUse, filenameToUse);
       if (res.success && res.data) {
-        applyMergedData(res.data);
+        applyMergedData(res.data, true);
 
         const nowIso = new Date().toISOString();
         updateGistConfig({
@@ -913,7 +923,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (res.success) {
         if (res.data && res.report) {
           setLatestMergeReport(res.report);
-          if (res.report.incomingScoresCount > 0 || res.report.incomingStudentsCount > 0 || res.report.incomingClassesCount > 0) {
+          if (!databaseEquals(getFullDatabaseObject(), res.data)) {
             applyMergedData(res.data);
             setGistLastMessage(`⚡ 自动合并成功！融合了云端协同数据（${res.report.incomingScoresCount} 条新成绩, ${res.report.incomingStudentsCount} 位新学员）`);
           }
@@ -941,6 +951,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     units,
     teachers,
     weakPointCategories,
+    deletedEntities,
+    dictionaryAddedAt,
     gistConfig.autoSync,
     gistConfig.token,
     gistConfig.gistId
@@ -960,7 +972,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (remoteRes.success && remoteRes.data) {
           const currentLocal = getFullDatabaseObject();
           const { merged, report } = mergeDatasets(currentLocal, remoteRes.data);
-          if (report.incomingScoresCount > 0 || report.incomingStudentsCount > 0 || report.incomingClassesCount > 0) {
+          if (!databaseEquals(currentLocal, merged)) {
             applyMergedData(merged);
             setLatestMergeReport(report);
             setGistLastMessage(`🔄 云端多端协同：已自动合并来自其他老师的 ${report.incomingScoresCount} 条新成绩与 ${report.incomingStudentsCount} 位新学员`);
@@ -1042,7 +1054,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const nowStr = new Date(now).toISOString().replace('T', ' ').substring(0, 19);
     const newItems: ScoreRecord[] = records.map((r, idx) => ({
       ...r,
-      id: `scr_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `scr_${crypto.randomUUID()}`,
       recordedAt: nowStr,
       updatedAt: now,
       isDeleted: false,
@@ -1053,23 +1065,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addScoreBatchAndSync = async (
     records: Omit<ScoreRecord, 'id' | 'recordedAt'>[],
-    options?: { syncToCloud?: boolean; teacherName?: string }
+    options?: { syncToCloud?: boolean; teacherName?: string; duplicateMode?: 'update' | 'retest' }
   ): Promise<ScoreBatchSyncResult> => {
     const now = Date.now();
-    const nowStr = new Date(now).toISOString().replace('T', ' ').substring(0, 19);
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
 
-    const newItems: ScoreRecord[] = records.map((r, idx) => ({
-      ...r,
-      id: `scr_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
-      recordedAt: nowStr,
-      updatedAt: now,
-      isDeleted: false,
-      weakPoints: Array.isArray(r.weakPoints) ? r.weakPoints : []
-    }));
+    const newItems = prepareScoreBatch(records, rawScoreRecordsRef.current, options, now);
 
     // 1. Update local raw state & persistence
-    const updatedRawRecords = [...newItems, ...rawScoreRecords];
+    const replacedIds = new Set(newItems.map(item => item.id));
+    const updatedRawRecords = [...newItems, ...rawScoreRecordsRef.current.filter(item => !replacedIds.has(item.id))];
+    rawScoreRecordsRef.current = updatedRawRecords;
     setRawScoreRecords(updatedRawRecords);
     localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(updatedRawRecords));
 
@@ -1081,7 +1087,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!shouldSyncCloud || !isCloudReady) {
       const msg = !isCloudReady
         ? '✅ 已保存在当前电脑本地（未配置云端 Gist 同步）'
-        : '✅ 已保存在当前电脑本地（本地模式）';
+        : '✅ 仅保存在当前浏览器，不参与自动同步；点击云端上传后才会发布。';
 
       addSyncLog({
         type: 'local_save',
@@ -1100,12 +1106,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
-    // 2. Perform Atomic Smart Merge & Push to GitHub Gist
+    // 2. Perform Append-only Merge & Push to GitHub Gist
     setIsSyncingGist(true);
-    setGistLastMessage('正在执行云端智能合并与加密上传...');
+    setGistLastMessage('正在执行云端智能合并与上传...');
 
     try {
       const fullLocalData = {
+        ...getFullDatabaseObject(),
         version: '2.0',
         exportedAt: new Date().toISOString(),
         classes: rawClasses,
@@ -1114,7 +1121,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         levels,
         units,
         teachers,
-        weakPointCategories
+        weakPointCategories,
+        deletedEntities: deletedEntitiesRef.current,
+        dictionaryAddedAt: dictionaryAddedAtRef.current
       };
 
       const res = await pushDataToGistWithSmartMerge(
@@ -1220,25 +1229,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const persistScoreRecords = (records: ScoreRecord[]) => {
+    rawScoreRecordsRef.current = records;
+    setRawScoreRecords(records);
+    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(records));
+  };
+
   const updateScoreRecord = (id: string, updated: Partial<ScoreRecord>) => {
     const now = Date.now();
-    setRawScoreRecords(prev =>
-      prev.map(item => (item.id === id ? { ...item, ...updated, updatedAt: now, isDeleted: false } : item))
-    );
+    persistScoreRecords(rawScoreRecordsRef.current.map(item => item.id === id
+      ? { ...item, ...updated, id: item.id, updatedAt: Math.max(now, (item.updatedAt || 0) + 1), isDeleted: false } : item));
   };
 
   const deleteScoreRecord = (id: string) => {
     const now = Date.now();
-    setRawScoreRecords(prev =>
-      prev.map(item => (item.id === id ? { ...item, isDeleted: true, updatedAt: now } : item))
-    );
+    persistScoreRecords(rawScoreRecordsRef.current.map(item => item.id === id
+      ? { ...item, isDeleted: true, updatedAt: Math.max(now, (item.updatedAt || 0) + 1) } : item));
   };
 
   const deleteScoreBatch = (batchId: string) => {
     const now = Date.now();
-    setRawScoreRecords(prev =>
-      prev.map(item => (item.batchId === batchId ? { ...item, isDeleted: true, updatedAt: now } : item))
-    );
+    persistScoreRecords(rawScoreRecordsRef.current.map(item => item.batchId === batchId
+      ? { ...item, isDeleted: true, updatedAt: Math.max(now, (item.updatedAt || 0) + 1) } : item));
   };
 
   // 2. Class Operations
@@ -1443,6 +1455,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     try {
       const fullLocalData = {
+        ...getFullDatabaseObject(),
         version: '2.0',
         exportedAt: new Date().toISOString(),
         classes: nextClasses,
@@ -1610,6 +1623,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     try {
       const fullLocalData = {
+        ...getFullDatabaseObject(),
         version: '2.0',
         exportedAt: new Date().toISOString(),
         classes: nextClasses,
@@ -1802,6 +1816,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     try {
       const fullLocalData = {
+        ...getFullDatabaseObject(),
         version: '2.0',
         exportedAt: new Date().toISOString(),
         classes: rawClassesRef.current,
@@ -2020,6 +2035,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     try {
       const fullLocalData = {
+        ...getFullDatabaseObject(),
         version: '2.0',
         exportedAt: new Date().toISOString(),
         classes: rawClasses,
@@ -2193,6 +2209,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     try {
       const fullLocalData = {
+        ...getFullDatabaseObject(),
         version: '2.0',
         exportedAt: new Date().toISOString(),
         classes: rawClasses,

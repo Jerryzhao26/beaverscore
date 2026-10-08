@@ -1,3 +1,4 @@
+import { getScorePercentage, roundScore } from '../utils/analysis';
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { normalizeExamCategory, getExamCategoryLabel } from '../utils/analysis';
@@ -47,7 +48,7 @@ export const ClassAnalysisView: React.FC = () => {
       if (selectedLevel !== 'all' && r.level !== selectedLevel && r.schoolGrade !== selectedLevel) {
         return false;
       }
-      return r.attendance === 'present' && typeof r.score === 'number' && !isNaN(r.score);
+      return getScorePercentage(r) !== null;
     });
   }, [scoreRecords, selectedCategory, selectedClassId, selectedLevel]);
 
@@ -57,9 +58,9 @@ export const ClassAnalysisView: React.FC = () => {
     filteredRecords.forEach(r => {
       const lvl = r.level;
       if (!map[lvl]) {
-        map[lvl] = { total: 0, sum: 0, count: 0, max: -1, min: 101 };
+        map[lvl] = { total: 0, sum: 0, count: 0, max: -Infinity, min: Infinity };
       }
-      const score = r.score as number;
+      const score = getScorePercentage(r)!;
       map[lvl].sum += score;
       map[lvl].count += 1;
       map[lvl].max = Math.max(map[lvl].max, score);
@@ -69,8 +70,8 @@ export const ClassAnalysisView: React.FC = () => {
     return Object.keys(map).map(lvl => ({
       level: lvl,
       avg: Math.round((map[lvl].sum / map[lvl].count) * 10) / 10,
-      max: map[lvl].max,
-      min: map[lvl].min,
+      max: roundScore(map[lvl].max),
+      min: roundScore(map[lvl].min),
       count: map[lvl].count
     }));
   }, [filteredRecords]);
@@ -83,7 +84,7 @@ export const ClassAnalysisView: React.FC = () => {
       if (!map[u]) {
         map[u] = { sum: 0, count: 0 };
       }
-      map[u].sum += r.score as number;
+      map[u].sum += getScorePercentage(r)!;
       map[u].count += 1;
     });
 
@@ -101,7 +102,7 @@ export const ClassAnalysisView: React.FC = () => {
     let fail = 0;      // <60
 
     filteredRecords.forEach(r => {
-      const score = r.score as number;
+      const score = getScorePercentage(r)!;
       if (score >= 90) excellent++;
       else if (score >= 80) good++;
       else if (score >= 60) pass++;
@@ -135,6 +136,7 @@ export const ClassAnalysisView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <p className="text-xs text-slate-500">统计与图表均按各次考试满分折算为百分制；原始成绩保留在成绩明细中。</p>
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -294,7 +296,7 @@ export const ClassAnalysisView: React.FC = () => {
                     <span className="text-slate-700 font-medium">{item.name}</span>
                   </div>
                   <span className="font-bold text-slate-900">
-                    {item.count}人 ({item.percent}%)
+                    {item.count}份成绩 ({item.percent}%)
                   </span>
                 </div>
               ))}

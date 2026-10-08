@@ -3,17 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { NavigationHeader } from './components/NavigationHeader';
 import { ScoreEntryView } from './components/ScoreEntryView';
-import { ScoreQueryView } from './components/ScoreQueryView';
-import { RankingsView } from './components/RankingsView';
-import { ClassAnalysisView } from './components/ClassAnalysisView';
-import { ManagementView } from './components/ManagementView';
 import { GistConfigModal } from './components/GistConfigModal';
 import { SyncNotificationModal } from './components/SyncNotificationModal';
 import { ActiveTab } from './types';
+
+const ScoreQueryView = lazy(() => import('./components/ScoreQueryView').then(module => ({ default: module.ScoreQueryView })));
+const RankingsView = lazy(() => import('./components/RankingsView').then(module => ({ default: module.RankingsView })));
+const ClassAnalysisView = lazy(() => import('./components/ClassAnalysisView').then(module => ({ default: module.ClassAnalysisView })));
+const ManagementView = lazy(() => import('./components/ManagementView').then(module => ({ default: module.ManagementView })));
 
 const MainAppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('entry');
@@ -34,16 +35,18 @@ const MainAppContent: React.FC = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
-        {activeTab === 'entry' && (
+        <div hidden={activeTab !== 'entry'}>
           <ScoreEntryView
             onNavigateToQuery={() => setActiveTab('query')}
             onNavigateToRanking={() => setActiveTab('rankings')}
           />
-        )}
-        {activeTab === 'query' && <ScoreQueryView />}
-        {activeTab === 'rankings' && <RankingsView />}
-        {activeTab === 'analytics' && <ClassAnalysisView />}
-        {activeTab === 'management' && <ManagementView />}
+        </div>
+        <Suspense fallback={<p className="p-6 text-slate-500">正在加载页面…</p>}>
+          {activeTab === 'query' && <ScoreQueryView />}
+          {activeTab === 'rankings' && <RankingsView />}
+          {activeTab === 'analytics' && <ClassAnalysisView />}
+          {activeTab === 'management' && <ManagementView />}
+        </Suspense>
       </main>
 
       {/* Global Gist Cloud Synchronization Modal */}

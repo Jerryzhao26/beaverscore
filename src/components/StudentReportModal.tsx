@@ -1,3 +1,5 @@
+import { compareScoreRecordsByExamDateAsc } from '../utils/analysis';
+import { getScorePercentage, getPercentageDelta, areComparableExams, roundScore } from '../utils/analysis';
 import React, { useState, useMemo } from 'react';
 import { Student, ScoreRecord } from '../types';
 import { normalizeExamCategory, getExamCategoryLabel } from '../utils/analysis';
@@ -49,30 +51,30 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
         }
         return true;
       })
-      .sort((a, b) => new Date(a.examDate).getTime() - new Date(b.examDate).getTime());
+      .sort(compareScoreRecordsByExamDateAsc);
   }, [records, selectedCategory]);
 
   const validScores = useMemo(() => {
     return filteredRecords
-      .filter(r => r.attendance === 'present' && typeof r.score === 'number' && !isNaN(r.score))
-      .map(r => r.score as number);
+      .filter(r => getScorePercentage(r) !== null)
+      .map(r => getScorePercentage(r)!);
   }, [filteredRecords]);
 
   const totalCount = validScores.length;
   const avgScore = totalCount > 0 ? Math.round((validScores.reduce((a, b) => a + b, 0) / totalCount) * 10) / 10 : 0;
-  const maxScore = totalCount > 0 ? Math.max(...validScores) : 0;
-  const latestRecord = filteredRecords[filteredRecords.length - 1];
-  const previousRecord = filteredRecords.length > 1 ? filteredRecords[filteredRecords.length - 2] : null;
+  const maxScore = totalCount > 0 ? roundScore(Math.max(...validScores)) : 0;
+  const scoredRecords = filteredRecords.filter(r => getScorePercentage(r) !== null);
+  const latestRecord = scoredRecords[scoredRecords.length - 1];
+  const comparable = latestRecord ? scoredRecords.filter(r => areComparableExams(r, latestRecord)) : [];
+  const previousRecord = comparable.length > 1 ? comparable[comparable.length - 2] : null;
 
-  const scoreDelta = (latestRecord && previousRecord && typeof latestRecord.score === 'number' && typeof previousRecord.score === 'number')
-    ? latestRecord.score - previousRecord.score
-    : null;
+  const scoreDelta = getPercentageDelta(latestRecord, previousRecord);
 
   const chartData = useMemo(() => {
     return filteredRecords.map(r => ({
       name: `${r.level} ${r.unit}`,
       date: r.examDate,
-      score: r.attendance === 'present' && typeof r.score === 'number' ? r.score : null,
+      score: getScorePercentage(r),
       category: getExamCategoryLabel(r.examCategory),
       title: r.examTitle
     }));
@@ -177,7 +179,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
           {/* Metric KPIs */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-3.5 text-center">
-              <div className="text-xs text-indigo-700 font-semibold">历史测验均分</div>
+              <div className="text-xs text-indigo-700 font-semibold">历史均分（百分制）</div>
               <div className="text-2xl font-black text-indigo-900 mt-1">
                 {totalCount > 0 ? `${avgScore} 分` : '-'}
               </div>
@@ -195,7 +197,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
             <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3.5 text-center">
               <div className="text-xs text-blue-700 font-semibold">最新阶段考得分</div>
               <div className="text-2xl font-black text-blue-900 mt-1">
-                {latestRecord?.score !== null && latestRecord?.score !== undefined ? `${latestRecord.score} 分` : '-'}
+                {latestRecord?.score !== null && latestRecord?.score !== undefined ? `${latestRecord.score} / ${latestRecord.maxScore ?? 100} 分` : '-'}
               </div>
               <div className="text-[11px] text-blue-600/80 mt-0.5">
                 {latestRecord ? `${latestRecord.level} ${latestRecord.unit}` : '暂无'}
@@ -221,7 +223,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
                   <span className="text-slate-400">-</span>
                 )}
               </div>
-              <div className="text-[11px] text-amber-700/80 mt-0.5">较上一单元变动</div>
+              <div className="text-[11px] text-amber-700/80 mt-0.5">同类别、同级别比较（百分点）</div>
             </div>
           </div>
 
@@ -254,7 +256,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
                     <Line
                       type="monotone"
                       dataKey="score"
-                      name="得分 (分)"
+                      name="得分率 (%)"
                       stroke="#4f46e5"
                       strokeWidth={3}
                       dot={{ r: 5, fill: '#4f46e5' }}
@@ -333,16 +335,16 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
                         {r.attendance === 'present' && typeof r.score === 'number' ? (
                           <span
                             className={`inline-block px-2 py-0.5 rounded-full font-bold font-mono ${
-                              r.score >= 90
+                              (getScorePercentage(r) ?? 0) >= 90
                                 ? 'bg-emerald-100 text-emerald-800'
-                                : r.score >= 80
+                                : (getScorePercentage(r) ?? 0) >= 80
                                 ? 'bg-blue-100 text-blue-800'
-                                : r.score >= 60
+                                : (getScorePercentage(r) ?? 0) >= 60
                                 ? 'bg-amber-100 text-amber-800'
                                 : 'bg-rose-100 text-rose-800'
                             }`}
                           >
-                            {r.score} 分
+                            {r.score} / {r.maxScore ?? 100} 分
                           </span>
                         ) : (
                           <span className="text-slate-400">

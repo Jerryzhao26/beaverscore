@@ -62,13 +62,13 @@ export const RankingsView: React.FC = () => {
 
   const progressRanking = useMemo(() => {
     return [...allStats]
-      .filter(s => s.recordsCount >= 2 && s.scoreDelta > 0)
+      .filter(s => s.hasComparison && s.scoreDelta > 0)
       .sort((a, b) => b.scoreDelta - a.scoreDelta);
   }, [allStats]);
 
   const declineRanking = useMemo(() => {
     return [...allStats]
-      .filter(s => (s.recordsCount >= 2 && s.scoreDelta < 0) || s.latestScore < 70)
+      .filter(s => (s.hasComparison && s.scoreDelta < 0) || s.latestPercentage < 70)
       .sort((a, b) => a.scoreDelta - b.scoreDelta);
   }, [allStats]);
 
@@ -83,8 +83,8 @@ export const RankingsView: React.FC = () => {
 
   const fullMarksRanking = useMemo(() => {
     return [...allStats]
-      .filter(s => s.latestScore >= 95 || s.fullScoreCount > 0)
-      .sort((a, b) => b.latestScore - a.latestScore);
+      .filter(s => s.latestPercentage >= 95 || s.fullScoreCount > 0)
+      .sort((a, b) => b.latestPercentage - a.latestPercentage);
   }, [allStats]);
 
   const triggerCelebration = () => {
@@ -106,9 +106,9 @@ export const RankingsView: React.FC = () => {
         '学员姓名': s.studentName,
         '所属班级': s.className,
         '级别': s.level,
-        '上次成绩': `${s.previousScore ?? '-'}分 (${s.previousUnit ?? ''})`,
-        '最新成绩': `${s.latestScore}分 (${s.latestUnit})`,
-        '提升幅度': `+${s.scoreDelta}分`,
+        '上次成绩': `${s.previousScore ?? '-'}/${s.previousMaxScore ?? '-'}分 (${s.previousUnit ?? ''})`,
+        '最新成绩': `${s.latestScore}/${s.latestMaxScore}分 (${s.latestUnit})`,
+        '提升幅度': `+${s.scoreDelta}百分点`,
         '教师评语': s.latestRemark || ''
       }));
     } else if (activeRankingTab === 'decline') {
@@ -118,7 +118,7 @@ export const RankingsView: React.FC = () => {
         '学员姓名': s.studentName,
         '所属班级': s.className,
         '级别': s.level,
-        '变动情况': `${s.scoreDelta}分 (前次${s.previousScore ?? '-'} ➔ 本次${s.latestScore})`,
+        '变动情况': `${s.scoreDelta}百分点 (前次${s.previousScore ?? '-'}/${s.previousMaxScore ?? '-'} ➔ 本次${s.latestScore}/${s.latestMaxScore})`,
         '主要薄弱点': s.recentWeakPoints.join('; '),
         '失分细节': s.latestMistake || '',
         '教师建议': s.latestRemark || ''
@@ -130,8 +130,8 @@ export const RankingsView: React.FC = () => {
         '学员姓名': s.studentName,
         '所属班级': s.className,
         '级别': s.level,
-        '历史测评均分': `${s.averageScore}分`,
-        '最高分': `${s.maxScore}分`,
+        '历史测评均分（百分制）': `${s.averageScore}分`,
+        '最高分（百分制）': `${s.maxScore}分`,
         '90分以上次数': `${s.topScoreCount}次`,
         '参评次数': `${s.recordsCount}次`
       }));
@@ -142,6 +142,7 @@ export const RankingsView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <p className="text-xs text-slate-500">均分与排名按百分制统计，进退步为同类别、同级别的得分率变化（百分点）。原始成绩以“得分 / 满分”显示。</p>
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -381,10 +382,10 @@ export const RankingsView: React.FC = () => {
                   <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 my-3 text-center">
                     <div className="text-xs text-emerald-700 font-medium">提升幅度</div>
                     <div className="text-2xl font-black text-emerald-600">
-                      +{progressRanking[1].scoreDelta} <span className="text-xs font-normal">分 🚀</span>
+                      +{progressRanking[1].scoreDelta} <span className="text-xs font-normal">百分点 🚀</span>
                     </div>
                     <div className="text-[11px] text-emerald-800 mt-1">
-                      {progressRanking[1].previousScore}分 ➔ <strong>{progressRanking[1].latestScore}分</strong>
+                      {progressRanking[1].previousScore} / {progressRanking[1].previousMaxScore}分 ➔ <strong>{progressRanking[1].latestScore} / {progressRanking[1].latestMaxScore}分</strong>
                     </div>
                   </div>
                 </div>
@@ -416,10 +417,10 @@ export const RankingsView: React.FC = () => {
                   <div className="bg-emerald-100/70 border border-emerald-200 rounded-xl p-3.5 my-3 text-center">
                     <div className="text-xs text-emerald-800 font-bold">全校突破最大跨度</div>
                     <div className="text-3xl font-black text-emerald-700">
-                      +{progressRanking[0].scoreDelta} <span className="text-sm font-normal">分 🚀</span>
+                      +{progressRanking[0].scoreDelta} <span className="text-sm font-normal">百分点 🚀</span>
                     </div>
                     <div className="text-xs text-emerald-900 mt-1 font-semibold">
-                      从 {progressRanking[0].previousScore}分 暴涨至 <strong>{progressRanking[0].latestScore}分</strong>
+                      从 {progressRanking[0].previousScore} / {progressRanking[0].previousMaxScore}分 暴涨至 <strong>{progressRanking[0].latestScore} / {progressRanking[0].latestMaxScore}分</strong>
                     </div>
                   </div>
                   {progressRanking[0].latestRemark && (
@@ -456,10 +457,10 @@ export const RankingsView: React.FC = () => {
                   <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 my-3 text-center">
                     <div className="text-xs text-emerald-700 font-medium">提升幅度</div>
                     <div className="text-2xl font-black text-emerald-600">
-                      +{progressRanking[2].scoreDelta} <span className="text-xs font-normal">分 🚀</span>
+                      +{progressRanking[2].scoreDelta} <span className="text-xs font-normal">百分点 🚀</span>
                     </div>
                     <div className="text-[11px] text-emerald-800 mt-1">
-                      {progressRanking[2].previousScore}分 ➔ <strong>{progressRanking[2].latestScore}分</strong>
+                      {progressRanking[2].previousScore} / {progressRanking[2].previousMaxScore}分 ➔ <strong>{progressRanking[2].latestScore} / {progressRanking[2].latestMaxScore}分</strong>
                     </div>
                   </div>
                 </div>
@@ -521,15 +522,15 @@ export const RankingsView: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-center text-slate-500">
-                          {item.previousScore ?? '-'} 分 ({item.previousUnit ?? '-'})
+                          {item.previousScore ?? '-'} / {item.previousMaxScore} 分 ({item.previousUnit ?? '-'})
                         </td>
                         <td className="py-3 px-4 text-center font-bold text-slate-900">
-                          {item.latestScore} 分 ({item.latestUnit})
+                          {item.latestScore} / {item.latestMaxScore} 分 ({item.latestUnit})
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-black text-xs">
                             <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-                            +{item.scoreDelta} 分
+                            +{item.scoreDelta} 百分点
                           </span>
                         </td>
                         <td className="py-3 px-4 text-slate-600 italic">
@@ -609,17 +610,17 @@ export const RankingsView: React.FC = () => {
                         <td className="py-3 px-4 text-center">
                           {item.previousScore !== undefined ? (
                             <div>
-                              <span className="text-slate-400">{item.previousScore}分</span>
+                              <span className="text-slate-400">{item.previousScore} / {item.previousMaxScore}分</span>
                               <span className="mx-1 text-slate-300">➔</span>
-                              <strong className="text-rose-600 font-bold">{item.latestScore}分</strong>
+                              <strong className="text-rose-600 font-bold">{item.latestScore} / {item.latestMaxScore}分</strong>
                               <div className="text-[11px] font-semibold text-rose-600 mt-0.5 flex items-center justify-center">
                                 <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />
-                                下滑 {Math.abs(item.scoreDelta)} 分
+                                {item.scoreDelta < 0 ? `下滑 ${Math.abs(item.scoreDelta)} 个百分点` : item.scoreDelta > 0 ? `上升 ${item.scoreDelta} 个百分点（仍需关注）` : '得分率持平（仍需关注）'}
                               </div>
                             </div>
                           ) : (
                             <div className="text-rose-600 font-bold">
-                              当前 {item.latestScore} 分 (需提升)
+                              当前 {item.latestScore} / {item.latestMaxScore} 分 (需提升)
                             </div>
                           )}
                         </td>
@@ -722,10 +723,10 @@ export const RankingsView: React.FC = () => {
                       <span className="font-black text-indigo-700 text-sm">
                         {item.averageScore}
                       </span>{' '}
-                      分
+                      分（百分制）
                     </td>
                     <td className="py-3 px-4 text-center font-bold text-emerald-600">
-                      {item.maxScore} 分
+                      {item.maxScore} 分（百分制）
                     </td>
                     <td className="py-3 px-4 text-center font-semibold text-amber-600">
                       {item.topScoreCount} 次
@@ -757,7 +758,7 @@ export const RankingsView: React.FC = () => {
           <div className="px-5 py-3.5 bg-amber-50/60 border-b border-amber-100 flex items-center justify-between">
             <span className="text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center">
               <Star className="w-4 h-4 mr-1 text-amber-600" />
-              满分与拔尖达人榜 (95分 - 100分标杆)
+              历史满分 / 最近得分率 ≥95%
             </span>
             <span className="text-xs text-amber-700">展现卓越综合素质的学员</span>
           </div>
@@ -774,7 +775,7 @@ export const RankingsView: React.FC = () => {
                       {item.level}
                     </span>
                     <span className="text-xl font-black text-amber-600">
-                      {item.latestScore === 100 ? '💯 满分' : `${item.latestScore}分`}
+                      {item.latestPercentage === 100 ? '💯 满分' : `${item.latestScore} / {item.latestMaxScore}分`}
                     </span>
                   </div>
                   <h4 className="font-bold text-slate-900 text-base mt-2">{item.studentName}</h4>

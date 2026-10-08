@@ -1,8 +1,9 @@
+import { getScorePercentage, getPercentageDelta, areComparableExams, roundScore } from '../utils/analysis';
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { ScoreRecord, Student, ExamCategory } from '../types';
 import { CloudSyncButtons } from './CloudSyncButtons';
-import { exportToCSV, normalizeExamCategory, getExamCategoryLabel, compareScoreRecordsByExamDateDesc, formatExamTitle } from '../utils/analysis';
+import { exportToCSV, normalizeExamCategory, getExamCategoryLabel, compareScoreRecordsByExamDateDesc, compareScoreRecordsByExamDateAsc, formatExamTitle } from '../utils/analysis';
 import { PUBLIC_SCHOOL_GRADES, PUBLIC_SCHOOL_EXAM_UNITS } from '../data/initialData';
 import { StudentReportModal } from './StudentReportModal';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -94,6 +95,7 @@ export const ScoreQueryView: React.FC = () => {
 
   const filteredRecords = useMemo(() => {
     return scoreRecords.filter(r => {
+      const pct = getScorePercentage(r);
       if (filterCategory !== 'all') {
         const cat = normalizeExamCategory(r.examCategory);
         if (cat !== filterCategory) return false;
@@ -111,15 +113,15 @@ export const ScoreQueryView: React.FC = () => {
       if (filterScoreRange === 'absent') {
         if (r.attendance === 'present' && typeof r.score === 'number') return false;
       } else if (filterScoreRange === '100') {
-        if (r.attendance !== 'present' || r.score === null || r.score < 100) return false;
+        if (pct === null || r.score !== (r.maxScore ?? 100)) return false;
       } else if (filterScoreRange === '90+') {
-        if (r.attendance !== 'present' || r.score === null || r.score < 90) return false;
+        if (pct === null || pct < 90) return false;
       } else if (filterScoreRange === '80-89') {
-        if (r.attendance !== 'present' || r.score === null || r.score < 80 || r.score >= 90) return false;
+        if (pct === null || pct < 80 || pct >= 90) return false;
       } else if (filterScoreRange === '60-79') {
-        if (r.attendance !== 'present' || r.score === null || r.score < 60 || r.score >= 80) return false;
+        if (pct === null || pct < 60 || pct >= 80) return false;
       } else if (filterScoreRange === '<60') {
-        if (r.attendance !== 'present' || r.score === null || r.score >= 60) return false;
+        if (pct === null || pct >= 60) return false;
       }
 
       if (filterTagKeyword.trim()) {
@@ -146,17 +148,17 @@ export const ScoreQueryView: React.FC = () => {
 
   const summaryStats = useMemo(() => {
     const presentRecords = filteredRecords.filter(
-      r => r.attendance === 'present' && typeof r.score === 'number' && !isNaN(r.score)
+      r => getScorePercentage(r) !== null
     );
     const total = presentRecords.length;
     if (total === 0) {
       return { total: 0, avg: 0, max: 0, min: 0, passRate: 0, distinctionRate: 0 };
     }
-    const scores = presentRecords.map(r => r.score as number);
+    const scores = presentRecords.map(r => getScorePercentage(r)!);
     const sum = scores.reduce((a, b) => a + b, 0);
     const avg = Math.round((sum / total) * 10) / 10;
-    const max = Math.max(...scores);
-    const min = Math.min(...scores);
+    const max = roundScore(Math.max(...scores));
+    const min = roundScore(Math.min(...scores));
     const passCount = scores.filter(s => s >= 60).length;
     const distinctionCount = scores.filter(s => s >= 90).length;
     const passRate = Math.round((passCount / total) * 100);
@@ -207,6 +209,10 @@ export const ScoreQueryView: React.FC = () => {
       unit: editingRecord.unit,
       schoolGrade: editingRecord.schoolGrade
     });
+    if (editingRecord.attendance === 'present' && getScorePercentage(editingRecord) === null) {
+      alert('请输入 0 到本次满分之间的有效成绩');
+      return;
+    }
     updateScoreRecord(editingRecord.id, {
       ...editingRecord,
       examTitle: computedTitle
@@ -226,6 +232,7 @@ export const ScoreQueryView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <p className="text-xs text-slate-500">统计、分数区间和进退步按满分折算为百分制；明细显示原始分数。</p>
       {/* Top Quick Cloud Sync Action Bar */}
       <CloudSyncButtons variant="toolbar" />
 
@@ -445,17 +452,17 @@ export const ScoreQueryView: React.FC = () => {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs">
-          <div className="text-[11px] text-slate-400 font-medium">筛选均分</div>
+          <div className="text-[11px] text-slate-400 font-medium">筛选均分（百分制）</div>
           <div className="text-xl font-bold text-indigo-600 mt-0.5">{summaryStats.avg} 分</div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs">
-          <div className="text-[11px] text-slate-400 font-medium">最高历史分</div>
+          <div className="text-[11px] text-slate-400 font-medium">最高历史分（百分制）</div>
           <div className="text-xl font-bold text-emerald-600 mt-0.5">{summaryStats.max} 分</div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs">
-          <div className="text-[11px] text-slate-400 font-medium">最低分</div>
+          <div className="text-[11px] text-slate-400 font-medium">最低分（百分制）</div>
           <div className="text-xl font-bold text-rose-500 mt-0.5">{summaryStats.min} 分</div>
         </div>
 
@@ -550,16 +557,16 @@ export const ScoreQueryView: React.FC = () => {
                         ) : typeof record.score === 'number' ? (
                           <span
                             className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold font-mono ${
-                              record.score >= 90
+                              (getScorePercentage(record) ?? 0) >= 90
                                 ? 'bg-emerald-100 text-emerald-800'
-                                : record.score >= 80
+                                : (getScorePercentage(record) ?? 0) >= 80
                                 ? 'bg-blue-100 text-blue-800'
-                                : record.score >= 60
+                                : (getScorePercentage(record) ?? 0) >= 60
                                 ? 'bg-amber-100 text-amber-800'
                                 : 'bg-rose-100 text-rose-800'
                             }`}
                           >
-                            {record.score} 分
+                            {record.score} / {record.maxScore ?? 100} 分
                           </span>
                         ) : (
                           <span className="inline-block px-2.5 py-1 rounded-full text-xs text-slate-400 bg-slate-100">
@@ -641,17 +648,16 @@ export const ScoreQueryView: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {students.map(student => {
             const studentRecords = scoreRecords
-              .filter(r => r.studentId === student.id && r.attendance === 'present' && typeof r.score === 'number' && !isNaN(r.score))
-              .sort((a, b) => new Date(a.examDate).getTime() - new Date(b.examDate).getTime());
+              .filter(r => r.studentId === student.id && getScorePercentage(r) !== null)
+              .sort(compareScoreRecordsByExamDateAsc);
 
-            const scores = studentRecords.map(r => r.score as number);
+            const scores = studentRecords.map(r => getScorePercentage(r)!);
             const count = scores.length;
             const avg = count > 0 ? (scores.reduce((a, b) => a + b, 0) / count).toFixed(1) : '-';
             const latest = studentRecords[studentRecords.length - 1];
-            const prev = studentRecords.length > 1 ? studentRecords[studentRecords.length - 2] : null;
-            const delta = (latest && prev && typeof latest.score === 'number' && typeof prev.score === 'number')
-              ? latest.score - prev.score
-              : null;
+            const comparable = latest ? studentRecords.filter(r => areComparableExams(r, latest)) : [];
+            const prev = comparable.length > 1 ? comparable[comparable.length - 2] : null;
+            const delta = getPercentageDelta(latest, prev);
 
             const weakCounts: { [tag: string]: number } = {};
             studentRecords.forEach(r => {
@@ -692,21 +698,21 @@ export const ScoreQueryView: React.FC = () => {
 
                   <div className="grid grid-cols-3 gap-2 bg-slate-50 rounded-lg p-2.5 my-3 text-center text-xs">
                     <div>
-                      <div className="text-slate-400 text-[10px]">均分</div>
+                      <div className="text-slate-400 text-[10px]">均分（百分制）</div>
                       <div className="font-bold text-indigo-700 text-sm">{avg}分</div>
                     </div>
                     <div>
                       <div className="text-slate-400 text-[10px]">最新测评</div>
-                      <div className="font-bold text-slate-800 text-sm">{latest?.score ?? '-'}分</div>
+                      <div className="font-bold text-slate-800 text-sm">{latest?.score ?? '-'} / {latest?.maxScore ?? 100}分</div>
                     </div>
                     <div>
                       <div className="text-slate-400 text-[10px]">近期变动</div>
                       <div className="font-bold text-sm">
                         {delta !== null ? (
                           delta > 0 ? (
-                            <span className="text-emerald-600">+{delta}分</span>
+                            <span className="text-emerald-600">+{delta}百分点</span>
                           ) : delta < 0 ? (
-                            <span className="text-rose-600">{delta}分</span>
+                            <span className="text-rose-600">{delta}百分点</span>
                           ) : (
                             <span className="text-slate-400">持平</span>
                           )
