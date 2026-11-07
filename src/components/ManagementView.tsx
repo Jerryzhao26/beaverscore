@@ -1,3 +1,4 @@
+import { RosterExport } from './RosterExport';
 import { RosterImport } from './RosterImport';
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
@@ -634,6 +635,8 @@ export const ManagementView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <RosterExport />
 
       {/* 1. Students Tab */}
       {activeSubTab === 'students' && (
