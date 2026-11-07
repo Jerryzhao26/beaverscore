@@ -78,3 +78,14 @@ test('separate new same-name classes stay separate; invalid and cyclic links fai
   const p = plan(rows, [], [], { [gs[0].key]: { target: `group:${gs[1].key}` }, [gs[1].key]: { target: `group:${gs[0].key}` } });
   assert.ok(p.errors.length); assert.equal(p.createdStudents, 0);
 });
+test('splitting a merged class preserves student identity and the original class', () => {
+  const second = { ...s, id: 's2', name: '小红', studentNo: '002' };
+  const r = { 班级名称: c.name, 教师: '李老师', 班级级别: 'BF2', '学年/学期': '秋', 姓名: second.name, 学生ID: second.id };
+  const k = groupJointRows([r])[0].key;
+  const p = plan([r], [c], [s, second], { [k]: { target: 'new', scope: 'imported' } }, { 2: { target: second.id, move: true, adopt: false } });
+  assert.deepEqual(p.errors, []); assert.equal(p.classes.length, 2);
+  assert.deepEqual(p.classes.find(x => x.id === c.id), c);
+  assert.deepEqual(p.students.find(x => x.id === s.id), s);
+  const moved = p.students.find(x => x.id === second.id)!;
+  assert.equal(moved.studentNo, second.studentNo); assert.notEqual(moved.classId, c.id); assert.equal(moved.currentLevel, 'BF2');
+});

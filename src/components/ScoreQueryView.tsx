@@ -1,3 +1,4 @@
+import { classLabel } from '../utils/classLabel';
 import { getScorePercentage, getPercentageDelta, areComparableExams, roundScore } from '../utils/analysis';
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
@@ -306,7 +307,7 @@ export const ScoreQueryView: React.FC = () => {
               <option value="all">全部班级 (All)</option>
               {classes.map(c => (
                 <option key={c.id} value={c.id}>
-                  {c.name}
+                  {classLabel(c)}
                 </option>
               ))}
             </select>
@@ -686,7 +687,7 @@ export const ScoreQueryView: React.FC = () => {
                           </span>
                         </h4>
                         <div className="text-xs text-slate-500 mt-0.5">
-                          {classes.find(c => c.id === student.classId)?.name || '在读学员'}
+                          {classLabel(classes.find(c => c.id === student.classId), '在读学员')}
                         </div>
                       </div>
                     </div>

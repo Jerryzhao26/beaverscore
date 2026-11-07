@@ -1,3 +1,4 @@
+import { classLabel } from '../utils/classLabel';
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { calculateStudentStats, exportToCSV } from '../utils/analysis';
@@ -284,7 +285,7 @@ export const RankingsView: React.FC = () => {
               <option value="all">全校全班级大排名</option>
               {classes.map(c => (
                 <option key={c.id} value={c.id}>
-                  {c.name} ({c.teacherName})
+                  {classLabel(c)}
                 </option>
               ))}
             </select>
