@@ -128,11 +128,17 @@ export function parseGistUrlParams(): UrlGistParams {
     hashParams.get('gist') ||
     hashParams.get('id');
 
-  const rawToken =
-    searchParams.get('token') ||
-    searchParams.get('pat') ||
-    hashParams.get('token') ||
-    hashParams.get('pat');
+  // Never accept credentials from links, including older shared URLs.
+  let removedCredential = false;
+  for (const key of ['token', 'pat']) {
+    if (url.searchParams.has(key) || hashParams.has(key)) removedCredential = true;
+    url.searchParams.delete(key);
+    hashParams.delete(key);
+  }
+  if (removedCredential) {
+    url.hash = hashParams.toString();
+    window.history.replaceState(window.history.state, '', url.toString());
+  }
 
   const autoSyncParam = searchParams.get('autoSync') || hashParams.get('autoSync');
   const autoPullParam = searchParams.get('autoPull') || hashParams.get('autoPull');
@@ -140,10 +146,8 @@ export function parseGistUrlParams(): UrlGistParams {
   if (rawGistId) {
     const cleanId = extractGistId(rawGistId);
     if (cleanId) {
-      const cleanTok = normalizeGithubToken(rawToken || undefined);
       return {
         gistId: cleanId,
-        token: cleanTok || undefined,
         autoSync: autoSyncParam !== null ? autoSyncParam === 'true' || autoSyncParam === '1' : true,
         autoPull: autoPullParam !== null ? autoPullParam === 'true' || autoPullParam === '1' : true,
         hasUrlBinding: true,
@@ -172,10 +176,6 @@ export function generateGistShareUrl(params: {
 
   const urlParams = new URLSearchParams();
   urlParams.set('gistId', cleanGistId);
-
-  if (params.mode !== 'readonly' && params.token && params.token.trim()) {
-    urlParams.set('token', params.token.trim());
-  }
 
   if (params.autoSync !== undefined) {
     urlParams.set('autoSync', params.autoSync ? 'true' : 'false');

@@ -1,24 +1,16 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# BeaverScore 班级与学生成绩管理
 
-# Run and deploy your AI Studio app
+使用 React、TypeScript、Vite，提供浏览器本地保存和 GitHub Gist 同步。
 
-This contains everything you need to run your app locally.
+## 本地运行与部署
 
-View your app in AI Studio: https://ai.studio/apps/a6a5c38e-5ae2-4724-8d86-eb536c69952d
+使用 Node.js 22，执行 `npm ci` 后运行 `npm run dev`。当前功能不需要 Gemini API Key。依赖以 package-lock.json 为准，统一使用 npm。运行 `npm run lint`、`npm test`、`npm run build` 验证。main 更新并通过检查后部署到 GitHub Pages；合并请求只运行检查。
 
-## Run Locally
+## 云端访问和保存
 
-**Prerequisites:**  Node.js
+分享链接不携带 Token，也不会开启接收者的自动上传。每位教师需自行配置有权访问 Gist 的 Token。旧链接中的凭据会被忽略并从地址栏移除；曾分享过的 Token 请在 GitHub 撤销。数据源链接不提供用户权限隔离，请勿用来向家长展示全校资料。
 
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
-
+使用 HTTPS 传输 JSON，未实现端到端加密。Token 保存在浏览器本地，勿在共享电脑保留凭据。本地写入失败时显示提示，请保持页面打开并导出完整 JSON 备份。
 
 ## 成绩录入与同步优化
 
@@ -36,3 +28,18 @@ View your app in AI Studio: https://ai.studio/apps/a6a5c38e-5ae2-4724-8d86-eb536
 不要仅下载基础 JSON 作为最新备份；应在应用的数据管理页导出完整 JSON。原始基础文件继续保留，新版写入的成绩通过变更文件/检查点读取。旧客户端无法读取这些新文件。
 
 验证命令：`npm run test`、`npm run lint`、`npm run build`。回归测试使用模拟 Gist，不会读写真实云端数据。
+
+
+## 批量导入班级与学生
+
+在「数据管理」的班级或学生页下载对应模板，删除示例行后填写，选择 Excel/CSV 文件，检查预览并确认。先导入班级再导入学生；每次读取首个工作表，文件最多 5 MB、5000 行。
+
+班级必填：班级名称、级别、教师；可选：学年。学生必填：姓名、学号、性别、班级；可选：级别、联系电话、入学日期、公校年级、备注。级别留空时继承班级级别；入学日期留空时使用当天日期。日期须填 YYYY-MM-DD 文本，学号及电话使用文本格式保留前导零。
+
+仅新增，不更新原档案。班级按完整名称匹配，班级重名、重复学号、未知级别和格式错误均阻止整批导入。修正后重新选择文件。导入保存本地，开启自动同步时会自动上传；也可手动点击同步合并。
+
+## 依赖安全与维护边界
+
+SheetJS 使用官方 CDN 的 0.20.3 发行包，修复旧 npm 版本的已知原型污染和 ReDoS 漏洞。首次安装需能访问 cdn.sheetjs.com；package-lock.json 记录完整性校验。详见 https://docs.sheetjs.com/docs/getting-started/installation/frameworks/ 。
+
+单条录入及表格导入检查班名/学号重复。历史 JSON 恢复与跨设备合并仍按实体 ID 和时间戳合并，未自动重写历史学号或关联关系。跨设备同时创建同名班级/同学号学生仍需人工核对；完整的跨用户唯一约束和权限控制需要后端支持。

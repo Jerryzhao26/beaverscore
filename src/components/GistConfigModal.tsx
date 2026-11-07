@@ -146,7 +146,7 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2500);
     setFeedbackMsg({
-      text: `📋 已复制${mode === 'full' ? '【全功能协同】' : '【只读查看】'}链接，发给同事打开即可自动完成云端配置！`,
+      text: `📋 已复制${mode === 'full' ? '【教师协作】' : '【数据源】'}链接，链接不含凭据；上传前需自行配置 Token。`,
       type: 'success'
     });
   };
@@ -423,14 +423,14 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
                   如何让同事无缝加入并共同使用此数据源？
                 </h4>
                 <p>
-                  只需复制下方系统生成的<strong>【机构专属协同网址】</strong>发送给同事，同事在浏览器中打开该网址，系统将<strong>自动绑定此 Gist 仓库</strong>，同事无需手动复制粘贴 Gist ID！
+                  只需复制下方系统生成的<strong>【机构专属协同网址】</strong>发送给同事，同事在浏览器中打开该网址，系统将<strong>自动绑定此 Gist 仓库</strong>，同事无需手动复制粘贴 Gist ID。每位老师仍需自行配置有权访问该 Gist 的 Token。链接会暴露数据源位置，请仅分享给有权查看全校资料的同事；此前分享过带 Token 的链接时，请在 GitHub 撤销旧 Token 并重新配置。
                 </p>
               </div>
 
               <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800">
-                    🔗 全功能协同网址 (包含 Gist 仓库与 Token，直接可录入与上传)
+                    🔗 全功能协同网址 (仅包含 Gist ID；上传需自行配置 Token)
                   </label>
                   <span className="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded">
                     推荐内部教师使用
@@ -466,7 +466,7 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
               <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800">
-                    👁️ 只读查看网址 (仅包含 Gist ID，不包含 Token，适合校长/顾问/家长查阅)
+                    👁️ 数据源链接 (不含 Token；不代表访问权限隔离)
                   </label>
                 </div>
 
@@ -483,7 +483,7 @@ export const GistConfigModal: React.FC<GistConfigModalProps> = ({ isOpen, onClos
                     disabled={!gistConfig.gistId}
                     className="px-4 py-2.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white rounded-lg text-xs font-semibold flex items-center shrink-0 cursor-pointer shadow-xs"
                   >
-                    <Copy className="w-3.5 h-3.5 mr-1" /> 复制只读链接
+                    <Copy className="w-3.5 h-3.5 mr-1" /> 复制数据源链接
                   </button>
                 </div>
               </div>

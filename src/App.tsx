@@ -1,9 +1,10 @@
+import { subscribeStorage, storageFailed } from './utils/storage';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useState, lazy, Suspense, useSyncExternalStore } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { NavigationHeader } from './components/NavigationHeader';
 import { ScoreEntryView } from './components/ScoreEntryView';
@@ -17,6 +18,7 @@ const ClassAnalysisView = lazy(() => import('./components/ClassAnalysisView').th
 const ManagementView = lazy(() => import('./components/ManagementView').then(module => ({ default: module.ManagementView })));
 
 const MainAppContent: React.FC = () => {
+  const hasStorageError = useSyncExternalStore(subscribeStorage, storageFailed, () => false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('entry');
   const {
     scoreRecords,
@@ -33,6 +35,10 @@ const MainAppContent: React.FC = () => {
       {/* Top Header */}
       <NavigationHeader activeTab={activeTab} setActiveTab={setActiveTab} />
 
+      {hasStorageError && <div role="alert" className="p-4 bg-rose-100 text-rose-900 text-sm">
+        本地保存失败，部分修改可能尚未保存。请保持此页面打开，在数据管理中导出完整 JSON 备份，再检查浏览器存储空间和权限。
+        <button type="button" className="underline ml-3" onClick={() => setActiveTab('management')}>前往数据管理</button>
+      </div>}
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
         <div hidden={activeTab !== 'entry'}>
