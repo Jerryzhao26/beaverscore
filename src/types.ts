@@ -148,6 +148,7 @@ export interface SyncNotificationData {
   outgoingClassesUpdated?: number;
   totalScoresCount?: number;
   totalStudentsCount?: number;
+  activeStudentsCount?: number;
   totalClassesCount?: number;
   incomingStudentNames?: string[];
   outgoingStudentNames?: string[];
