@@ -638,6 +638,8 @@ export const ManagementView: React.FC = () => {
 
       <RosterExport />
 
+      {activeSubTab === 'students' && <RosterImport kind="students" />}
+
       {/* 1. Students Tab */}
       {activeSubTab === 'students' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -867,7 +869,6 @@ export const ManagementView: React.FC = () => {
               </div>
             </form>
 
-            <RosterImport kind="students" />
           </div>
 
           {/* Right Table: Students List with Batch Adjust and Quick Level Change */}
