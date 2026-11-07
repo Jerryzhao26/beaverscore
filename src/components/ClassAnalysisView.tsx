@@ -1,3 +1,4 @@
+import { classLabel } from '../utils/classLabel';
 import { getScorePercentage, roundScore } from '../utils/analysis';
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
@@ -172,7 +173,7 @@ export const ClassAnalysisView: React.FC = () => {
               <option value="all">全部班级</option>
               {classes.map(c => (
                 <option key={c.id} value={c.id}>
-                  {c.name}
+                  {classLabel(c)}
                 </option>
               ))}
             </select>

@@ -1,3 +1,4 @@
+import { classLabel } from './classLabel';
 import type { ClassGroup, Student } from '../types';
 export type Row = Record<string, string>;
 export type ClassChoice = { target: string; fields?: Record<string, string>; scope?: 'class' | 'imported' | 'all' };
@@ -76,7 +77,7 @@ export function buildJointPlan(rows: Row[], classes: ClassGroup[], students: Stu
     if (choice.target === 'new') {
       if (!fields.teacherName || !fields.currentLevel) { errors.push(`新班级「${g.name}」教师和班级级别必填`); continue; }
       cls = { id: `cls_${crypto.randomUUID()}`, name: fields.name, teacherName: fields.teacherName, level: fields.currentLevel, currentLevel: fields.currentLevel, academicYear: fields.academicYear, updatedAt: now };
-      createdClasses++; nextClasses.push(cls); changes.push(`新建班级：${cls.name} / ${cls.teacherName}`);
+      createdClasses++; nextClasses.push(cls); changes.push(`新建班级：${classLabel(cls)}`);
     } else {
       if (!cls) { errors.push(`班级「${g.name}」不存在，请重新确认`); continue; }
       let changed = false; const oldLevel = cls.currentLevel || cls.level;
@@ -115,7 +116,7 @@ export function buildJointPlan(rows: Row[], classes: ClassGroup[], students: Stu
         const allocated = no || `S${now}${crypto.randomUUID().slice(0, 8)}`;
         if (nextStudents.some(s => !s.isDeleted && s.studentNo === allocated)) { errors.push(`第 ${line} 行：学号 ${allocated} 已存在，不能作为新学生`); continue; }
         nextStudents.push({ id: `std_${crypto.randomUUID()}`, name, studentNo: allocated, gender: undefined, classId: cls.id, currentLevel: level, enrolledDate: enrolled || date, status: 'active', ...patch, updatedAt: now });
-        createdStudents++; changes.push(`新增学生：${name} → ${cls.name}`);
+        createdStudents++; changes.push(`新增学生：${name} → ${classLabel(cls)}`);
       } else {
         const s = nextStudents.find(s => !s.isDeleted && s.id === sc.target);
         if (!s) { errors.push(`第 ${line} 行：学生不存在`); continue; }
@@ -128,7 +129,7 @@ export function buildJointPlan(rows: Row[], classes: ClassGroup[], students: Stu
         if (differs && sc.adopt === undefined) errors.push(`第 ${line} 行：资料有差异，请选择保留或采用表格资料`);
         const before = JSON.stringify(s);
         if (sc.adopt) Object.assign(s, patch);
-        if (sc.move) { changes.push(`转班：${s.name} / ${s.classId || '无班级'} → ${cls.name}`); s.classId = cls.id; }
+        if (sc.move) { changes.push(`转班：${s.name} / ${s.classId || '无班级'} → ${classLabel(cls)}`); s.classId = cls.id; }
         if (sc.restore) { s.status = 'active'; s.suspendedAt = undefined; s.suspendReason = undefined; }
         if (choice.scope === 'imported' && !get(row, '学生级别')) s.currentLevel = cls.level;
         if (JSON.stringify(s) !== before) { s.updatedAt = Math.max(now, (s.updatedAt || 0) + 1); updatedStudents++; changes.push(`更新学生：${s.name}${sc.adopt ? '（采用表格非空资料）' : ''}`); }

@@ -1,3 +1,4 @@
+import { classLabel } from '../utils/classLabel';
 import { ConfirmDialog } from './ConfirmDialog';
 import { EntryRowState, emptyEntryRow, hasEntryInput, isValidScoreInput, fillEmptyScores, sameExam, entryDraftKey, readEntryDraft, restoreEntryRows, getLocalDate } from '../utils/scoreEntry';
 import { getScorePercentage, getPercentageDelta, areComparableExams } from '../utils/analysis';
@@ -570,7 +571,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
             >
               {classes.map(c => (
                 <option key={c.id} value={c.id}>
-                  {c.name} ({c.level} · {c.teacherName})
+                  {classLabel(c)}
                 </option>
               ))}
             </select>

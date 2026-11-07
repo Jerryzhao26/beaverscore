@@ -1,3 +1,5 @@
+import { SplitClassModal } from './SplitClassModal';
+import { classLabel } from '../utils/classLabel';
 import { JointRosterImport } from './JointRosterImport';
 import { RosterExport } from './RosterExport';
 import { RosterImport } from './RosterImport';
@@ -39,6 +41,7 @@ import {
 } from 'lucide-react';
 
 export const ManagementView: React.FC = () => {
+  const [splitClassId, setSplitClassId] = useState<string | null>(null);
   const {
     students,
     classes,
@@ -728,7 +731,7 @@ export const ManagementView: React.FC = () => {
                       <span>⏸️ 已移出班级 (不占班额)</span>
                       {studentForm.previousClassId && (
                         <span className="text-[10px] text-slate-400">
-                          原: {classes.find(c => c.id === studentForm.previousClassId)?.name || '原班级'}
+                          原: {classLabel(classes.find(c => c.id === studentForm.previousClassId), '原班级')}
                         </span>
                       )}
                     </div>
@@ -751,7 +754,7 @@ export const ManagementView: React.FC = () => {
                       <option value="">-- 暂不分班 (未分配) --</option>
                       {classes.map(c => (
                         <option key={c.id} value={c.id}>
-                          {c.name} ({c.currentLevel || c.level})
+                          {classLabel(c)}
                         </option>
                       ))}
                     </select>
@@ -906,7 +909,7 @@ export const ManagementView: React.FC = () => {
                     const cnt = activeStudents.filter(s => s.classId === c.id).length;
                     return (
                       <option key={c.id} value={c.id}>
-                        {c.name} ({cnt}人在读)
+                        {classLabel(c)} ({cnt}人在读)
                       </option>
                     );
                   })}
@@ -1134,15 +1137,15 @@ export const ManagementView: React.FC = () => {
                               {student.previousClassId && (
                                 <span
                                   className="text-[10px] text-slate-400 mt-0.5"
-                                  title={`原所在班级: ${classes.find(c => c.id === student.previousClassId)?.name || '原班级'}`}
+                                  title={`原所在班级: ${classLabel(classes.find(c => c.id === student.previousClassId), '原班级')}`}
                                 >
-                                  原: {classes.find(c => c.id === student.previousClassId)?.name || '原班级'}
+                                  原: {classLabel(classes.find(c => c.id === student.previousClassId), '原班级')}
                                 </span>
                               )}
                             </div>
                           ) : classes.find(c => c.id === student.classId)?.name ? (
                             <span className="font-medium text-slate-800">
-                              {classes.find(c => c.id === student.classId)?.name}
+                              {classLabel(classes.find(c => c.id === student.classId))}
                             </span>
                           ) : (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
@@ -1224,7 +1227,7 @@ export const ManagementView: React.FC = () => {
                             <button
                               onClick={() => {
                                 const targetClassId = student.previousClassId || classes[0]?.id || '';
-                                const targetClassName = classes.find(c => c.id === targetClassId)?.name || '班级';
+                                const targetClassName = classLabel(classes.find(c => c.id === targetClassId), '班级');
                                 setConfirmDialog({
                                   isOpen: true,
                                   title: `办理学员【${student.name}】复学？`,
@@ -1469,7 +1472,7 @@ export const ManagementView: React.FC = () => {
                         </span>
                         <span className="text-xs text-slate-400">{c.academicYear}</span>
                       </div>
-                      <h4 className="font-bold text-slate-900 text-base mt-2">{c.name}</h4>
+                      <h4 className="font-bold text-slate-900 text-base mt-2">{classLabel(c)}</h4>
                       <div className="text-xs text-slate-500 mt-1">
                         主讲教师: <strong className="text-slate-700">{c.teacherName}</strong>
                       </div>
@@ -1478,7 +1481,8 @@ export const ManagementView: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="pt-3 mt-3 border-t border-slate-200/60 flex items-center justify-end space-x-2">
+                    <div className="pt-3 mt-3 border-t border-slate-200/60 flex flex-wrap items-center justify-end gap-2">
+                      <button onClick={() => setSplitClassId(c.id)} className="px-3 py-1 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-700">拆分班级</button>
                       <button
                         onClick={() => handleEditClassClick(c)}
                         className="px-3 py-1 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs hover:bg-slate-50 font-medium cursor-pointer flex items-center gap-1"
@@ -1491,27 +1495,27 @@ export const ManagementView: React.FC = () => {
                           if (classStudentCount > 0) {
                             setConfirmDialog({
                               isOpen: true,
-                              title: `确定解散删除班级【${c.name}】？`,
+                              title: `确定解散删除班级【${classLabel(c)}】？`,
                               message: `该班级目前有 ${classStudentCount} 名在读学员。\n\n删除该班级后：\n• 该班级将从班级列表中彻底移除；\n• 这 ${classStudentCount} 名学员将转为「未分班」状态（学员档案及历史测验成绩完整保留）；\n• 您可在学员名册中随时为他们重新分配班级。`,
                               confirmText: `解散班级 (${classStudentCount}名学员转未分班)`,
                               variant: 'danger',
                               onConfirm: () => {
                                 deleteClass(c.id);
                                 showToast(
-                                  `已解散班级【${c.name}】，${classStudentCount}名学员已转入未分班状态`
+                                  `已解散班级【${classLabel(c)}】，${classStudentCount}名学员已转入未分班状态`
                                 );
                               }
                             });
                           } else {
                             setConfirmDialog({
                               isOpen: true,
-                              title: `确定删除班级【${c.name}】？`,
-                              message: `确定从系统中删除班级【${c.name}】吗？此操作将立即从班级列表中移除该班级。`,
+                              title: `确定删除班级【${classLabel(c)}】？`,
+                              message: `确定从系统中删除班级【${classLabel(c)}】吗？此操作将立即从班级列表中移除该班级。`,
                               confirmText: '确认删除班级',
                               variant: 'danger',
                               onConfirm: () => {
                                 deleteClass(c.id);
-                                showToast(`已删除班级【${c.name}】`);
+                                showToast(`已删除班级【${classLabel(c)}】`);
                               }
                             });
                           }
@@ -1984,6 +1988,8 @@ export const ManagementView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {splitClassId && <SplitClassModal sourceId={splitClassId} onClose={() => setSplitClassId(null)} />}
 
       {/* Confirm Dialog */}
       <ConfirmDialog
