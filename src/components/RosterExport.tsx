@@ -33,7 +33,7 @@ export function RosterExport() {
       <button type="button" disabled={busy} onClick={() => void download('xlsx')} className="px-4 py-2 bg-emerald-700 text-white rounded-lg disabled:opacity-50">导出班级和学生（Excel）</button>
       <button type="button" disabled={busy} onClick={() => void download('json')} className="px-4 py-2 bg-indigo-600 text-white rounded-lg disabled:opacity-50">导出合并名单（JSON）</button>
     </div>
-    <p className="text-slate-500">不包含成绩或云端凭据。表格导入仅支持新增；合并已有档案请使用 JSON。同学号但不同 ID 的档案需要人工核对。</p>
+    <p className="text-slate-500">不包含成绩或云端凭据。Excel 可通过联合导入确认后更新已有档案；JSON 可在备份与恢复中按 ID 合并。同学号但不同 ID 的档案需要人工核对。</p>
     {message && <p role="status">{message}</p>}
   </section>;
 }
