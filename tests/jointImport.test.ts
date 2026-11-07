@@ -51,3 +51,30 @@ test('atomic roster write either persists both collections or leaves prior snaps
   try { persistRosterSnapshot([c], [s]); const before = stored; fail = true; assert.throws(() => persistRosterSnapshot([], [])); assert.equal(stored, before); assert.deepEqual(readRosterSnapshot()!.students, [s]); }
   finally { if (original) Object.defineProperty(globalThis, 'localStorage', original); else delete (globalThis as any).localStorage; }
 });
+test('multiple source groups can enter the same existing class in one plan', () => {
+  const rows = [{ ...row, 姓名: '新甲' }, { ...row, 教师: '', 姓名: '新乙' }];
+  const gs = groupJointRows(rows);
+  const p = plan(rows, [c], [], Object.fromEntries(gs.map(g => [g.key, { target: c.id }])));
+  assert.deepEqual(p.errors, []); assert.equal(p.createdClasses, 0); assert.equal(p.createdStudents, 2);
+  assert.ok(p.students.every(s => s.classId === c.id));
+});
+test('explicitly linked source groups create only one new class and keep all students', () => {
+  const rows = [{ ...row, 班级名称: '260905', 姓名: '甲' }, { ...row, 班级名称: '260905', 教师: '', 姓名: '乙' }];
+  const gs = groupJointRows(rows);
+  const p = plan(rows, [], [], { [gs[0].key]: { target: 'new' }, [gs[1].key]: { target: `group:${gs[0].key}` } });
+  assert.deepEqual(p.errors, []); assert.equal(p.createdClasses, 1); assert.equal(p.createdStudents, 2);
+  assert.equal(p.students[0].classId, p.students[1].classId);
+});
+test('linked groups still require conflicting class fields to be resolved', () => {
+  const rows = [{ ...row, 姓名: '甲' }, { ...row, 教师: '李老师', 班级级别: 'BF2', 姓名: '乙' }]; const gs = groupJointRows(rows);
+  const cc = { [gs[0].key]: { target: 'new' }, [gs[1].key]: { target: `group:${gs[0].key}` } };
+  assert.ok(plan(rows, [], [], cc).errors.length);
+  const p = plan(rows, [], [], { ...cc, [gs[0].key]: { target: 'new', fields: { teacherName: '李老师', currentLevel: 'BF2' } } });
+  assert.deepEqual(p.errors, []); assert.equal(p.classes[0].teacherName, '李老师');
+});
+test('separate new same-name classes stay separate; invalid and cyclic links fail safely', () => {
+  const rows = [row, { ...row, 教师: '李老师', 姓名: '乙' }]; const gs = groupJointRows(rows);
+  assert.equal(plan(rows).createdClasses, 2);
+  const p = plan(rows, [], [], { [gs[0].key]: { target: `group:${gs[1].key}` }, [gs[1].key]: { target: `group:${gs[0].key}` } });
+  assert.ok(p.errors.length); assert.equal(p.createdStudents, 0);
+});

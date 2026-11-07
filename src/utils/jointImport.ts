@@ -33,13 +33,36 @@ export function suggestStudent(row: Row, students: Student[]) {
   if (no && candidates.length === 1 && candidates[0].studentNo === no && candidates[0].name === name) return candidates[0].id;
   return candidates.length ? '' : 'new';
 }
+// Resolve explicit destinations before validation: many source groups may share one class.
+export function resolveJointGroups(rows: Row[], classes: ClassGroup[], choices: Record<string, ClassChoice>) {
+  const source = groupJointRows(rows); const buckets = new Map<string, { group: typeof source[number]; choice: ClassChoice; members: string[] }>();
+  const errors: string[] = [];
+  function root(key: string, visited = new Set<string>()): string | null {
+    if (visited.has(key)) return null;
+    visited.add(key);
+    const g = source.find(g => g.key === key); if (!g) return null;
+    const target = (choices[key] || { target: suggestClass(g, classes) }).target;
+    return target.startsWith('group:') ? root(target.slice(6), visited) : key;
+  }
+  for (const g of source) {
+    const rootKey = root(g.key);
+    if (!rootKey) { errors.push(`班级「${g.name}」的合并目标无效或循环，请重新选择`); continue; }
+    const rootGroup = source.find(g => g.key === rootKey)!;
+    const choice = choices[rootKey] || { target: suggestClass(rootGroup, classes) };
+    const bucketKey = choice.target && !['new', 'skip'].includes(choice.target) ? `existing:${choice.target}` : `source:${rootKey}`;
+    if (!buckets.has(bucketKey)) buckets.set(bucketKey, { group: { ...rootGroup, rows: [] }, choice, members: [] });
+    const bucket = buckets.get(bucketKey)!;
+    bucket.group.rows.push(...g.rows); bucket.members.push(g.key);
+  }
+  return { groups: [...buckets.values()], errors };
+}
 export function buildJointPlan(rows: Row[], classes: ClassGroup[], students: Student[], levels: string[], classChoices: Record<string, ClassChoice>, studentChoices: Record<string, StudentChoice>, now = Date.now()) {
   const nextClasses = classes.map(c => ({ ...c })); const nextStudents = students.map(s => ({ ...s }));
-  const errors: string[] = []; const changes: string[] = []; const seen = new Set<string>(); const selectedClasses = new Set<string>();
+  const errors: string[] = []; const changes: string[] = []; const seen = new Set<string>();
   let createdClasses = 0, createdStudents = 0, updatedStudents = 0, updatedClasses = 0, skipped = 0;
-  const groups = groupJointRows(rows); const date = new Date(now).toLocaleDateString('sv-SE');
-  for (const g of groups) {
-    const choice = classChoices[g.key] || { target: suggestClass(g, classes) };
+  const resolved = resolveJointGroups(rows, classes, classChoices); errors.push(...resolved.errors);
+  const groups = resolved.groups; const date = new Date(now).toLocaleDateString('sv-SE');
+  for (const { group: g, choice } of groups) {
     if (choice.target === 'skip') { skipped += g.rows.length; continue; }
     if (!choice.target) { errors.push(`班级「${g.name || '未填写'}」请选择归属`); continue; }
     if (!g.name) { errors.push(`第 ${g.rows[0].line} 行缺少班级名称`); continue; }
@@ -56,8 +79,6 @@ export function buildJointPlan(rows: Row[], classes: ClassGroup[], students: Stu
       createdClasses++; nextClasses.push(cls); changes.push(`新建班级：${cls.name} / ${cls.teacherName}`);
     } else {
       if (!cls) { errors.push(`班级「${g.name}」不存在，请重新确认`); continue; }
-      if (selectedClasses.has(cls.id)) { errors.push(`多个导入分组指向「${cls.name}」，请合并文件中的班级信息或选择不同班级`); continue; }
-      selectedClasses.add(cls.id);
       let changed = false; const oldLevel = cls.currentLevel || cls.level;
       for (const field of ['name', 'teacherName', 'currentLevel', 'academicYear']) {
         const incoming = fields[field]; const old = field === 'currentLevel' ? oldLevel : String(cls[field] || '');
@@ -80,7 +101,7 @@ export function buildJointPlan(rows: Row[], classes: ClassGroup[], students: Stu
       if (sc.target === 'skip') { skipped++; continue; }
       const name = get(row, '姓名', '学员姓名'); const no = get(row, '学号'); const id = get(row, '学生ID');
       if (!name || !sc.target) { errors.push(`第 ${line} 行：${!name ? '缺少姓名' : '请选择学生身份'}`); continue; }
-      const key = id ? `id:${id}` : no ? `no:${no}` : `name:${g.key}:${name}`;
+      const key = id ? `id:${id}` : no ? `no:${no}` : `name:${cls.id}:${name}`;
       if (seen.has(key)) { errors.push(`第 ${line} 行：文件内学生重复，请核对或跳过重复行`); continue; } seen.add(key);
       const level = get(row, '学生级别') || cls.currentLevel || cls.level;
       if (!levels.includes(level)) errors.push(`第 ${line} 行：学生级别未配置`);
