@@ -232,6 +232,16 @@ export const SyncNotificationModal: React.FC<SyncNotificationModalProps> = ({
                 </div>
               )}
 
+              {notification.activeStudentsCount !== undefined && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
+                  <div className="text-xs text-emerald-700 font-medium">全校在读学员</div>
+                  <div className="text-xl font-extrabold text-emerald-800 mt-0.5">
+                    {notification.activeStudentsCount} <span className="text-xs font-normal">人</span>
+                  </div>
+                  <div className="text-[10px] text-emerald-700 mt-1">不含停学 / 结业学员</div>
+                </div>
+              )}
+
               {notification.totalScoresCount !== undefined && (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
                   <div className="text-xs text-slate-500 font-medium">全校总考评记录</div>

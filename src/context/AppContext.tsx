@@ -1,3 +1,4 @@
+import { studentCounts } from '../utils/studentCounts';
 import { buildJointPlan, rosterVersion, type Row as JointRow, type ClassChoice, type StudentChoice } from '../utils/jointImport';
 import { readRosterSnapshot, persistRosterSnapshot } from '../utils/rosterStorage';
 import { assertUniqueRosterField } from '../utils/rosterValidation';
@@ -362,7 +363,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [syncNotification, setSyncNotification] = useState<SyncNotificationData | null>(null);
 
   const showSyncNotification = (data: SyncNotificationData) => {
-    setSyncNotification(data);
+    // Read the committed ref after merge/save, rather than a stale render snapshot.
+    setSyncNotification(data.totalStudentsCount === undefined ? data : {
+      ...data,
+      ...studentCounts(rawStudentsRef.current),
+    });
   };
 
   const dismissSyncNotification = () => {
