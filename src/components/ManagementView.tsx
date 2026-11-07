@@ -1,3 +1,4 @@
+import { JointRosterImport } from './JointRosterImport';
 import { RosterExport } from './RosterExport';
 import { RosterImport } from './RosterImport';
 import React, { useState, useMemo } from 'react';
@@ -638,7 +639,7 @@ export const ManagementView: React.FC = () => {
 
       <RosterExport />
 
-      {activeSubTab === 'students' && <RosterImport kind="students" />}
+      {(activeSubTab === 'students' || activeSubTab === 'classes') && <JointRosterImport />}
 
       {/* 1. Students Tab */}
       {activeSubTab === 'students' && (
@@ -1289,7 +1290,7 @@ export const ManagementView: React.FC = () => {
       )}
 
       {/* 2. Classes Tab */}
-      {activeSubTab === 'classes' && (<><RosterImport kind="classes" />
+      {activeSubTab === 'classes' && (<><details className="my-3"><summary className="cursor-pointer">仅导入班级（可选，无学生名单时使用）</summary><RosterImport kind="classes" /></details>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           {/* Left Form: Add/Edit Class (Floating / Sticky) */}
           <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs h-fit lg:sticky lg:top-20 z-10 max-h-[calc(100vh-6rem)] overflow-y-auto">

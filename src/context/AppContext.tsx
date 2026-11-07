@@ -1,3 +1,5 @@
+import { buildJointPlan, rosterVersion, type Row as JointRow, type ClassChoice, type StudentChoice } from '../utils/jointImport';
+import { readRosterSnapshot, persistRosterSnapshot } from '../utils/rosterStorage';
 import { assertUniqueRosterField } from '../utils/rosterValidation';
 import { persistItem, persistItemInBackground } from '../utils/storage';
 import { prepareScoreBatch } from '../utils/scoreEntry';
@@ -90,6 +92,8 @@ interface AppContextType {
   updateScoreRecord: (id: string, updated: Partial<ScoreRecord>) => void;
   deleteScoreRecord: (id: string) => void;
   deleteScoreBatch: (batchId: string) => void;
+
+  commitJointRoster: (rows: JointRow[], classChoices: Record<string, ClassChoice>, studentChoices: Record<string, StudentChoice>, version: string) => void;
 
   // Class Operations
   addClass: (cls: Omit<ClassGroup, 'id'>) => ClassGroup;
@@ -221,10 +225,11 @@ const normalizeClass = (c: any): ClassGroup => {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [rosterSnapshot] = useState(readRosterSnapshot);
   const [rawClasses, setRawClasses] = useState<ClassGroup[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CLASSES);
-      const parsed = saved ? JSON.parse(saved) : null;
+      const parsed = rosterSnapshot?.classes || (saved ? JSON.parse(saved) : null);
       const list: ClassGroup[] = Array.isArray(parsed) ? parsed : INITIAL_CLASSES;
       return list.map(normalizeClass);
     } catch {
@@ -235,7 +240,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [rawStudents, setRawStudents] = useState<Student[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-      const parsed = saved ? JSON.parse(saved) : null;
+      const parsed = rosterSnapshot?.students || (saved ? JSON.parse(saved) : null);
       const list: Student[] = Array.isArray(parsed) ? parsed : INITIAL_STUDENTS;
       return list.map(normalizeStudent);
     } catch {
@@ -1048,6 +1053,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     persistItemInBackground(STORAGE_KEYS.DICT_ADDED, JSON.stringify(dictionaryAddedAt));
   }, [dictionaryAddedAt]);
+
+  useEffect(() => {
+    try { persistRosterSnapshot(rawClasses, rawStudents); } catch { /* Global storage banner keeps the app available for backup. */ }
+  }, [rawClasses, rawStudents]);
+
+  const commitJointRoster = (rows: JointRow[], classChoices: Record<string, ClassChoice>, studentChoices: Record<string, StudentChoice>, version: string) => {
+    const liveClasses = rawClassesRef.current.filter(c => !c.isDeleted);
+    const liveStudents = rawStudentsRef.current.filter(s => !s.isDeleted);
+    const stored = readRosterSnapshot();
+    if (stored && rosterVersion(stored.classes.filter(c => !c.isDeleted), stored.students.filter(s => !s.isDeleted)) !== version) throw new Error('其他页面已修改名单，请刷新并重新确认');
+    if (version !== rosterVersion(liveClasses, liveStudents)) throw new Error('名单已变化，请重新上传并确认');
+    const plan = buildJointPlan(rows, liveClasses, liveStudents, levels, classChoices, studentChoices);
+    if (plan.errors.length) throw new Error(plan.errors.join('；'));
+    const nextClasses = [...rawClassesRef.current.filter(c => c.isDeleted), ...plan.classes];
+    const nextStudents = [...rawStudentsRef.current.filter(s => s.isDeleted), ...plan.students];
+    persistRosterSnapshot(nextClasses, nextStudents);
+    rawClassesRef.current = nextClasses; rawStudentsRef.current = nextStudents;
+    setRawClasses(nextClasses); setRawStudents(nextStudents);
+  };
 
   // 1. Score Operations with updatedAt & soft-delete
   const addScoreBatch = (records: Omit<ScoreRecord, 'id' | 'recordedAt'>[]) => {
@@ -2818,6 +2842,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addClass,
         addClassAndSync,
         batchAddClasses,
+        commitJointRoster,
         updateClass,
         updateClassAndSync,
         deleteClass,

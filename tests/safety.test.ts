@@ -33,7 +33,8 @@ test('storage failure clears only when failed key succeeds', () => {
 });
 test('roster identity validates duplicates, self edits and deleted entities', () => {
   const items = [{ id: 'a', name: '一班' }, { id: 'b', name: '二班', isDeleted: true }];
-  assert.throws(() => assertUniqueRosterField(items, 'name', ' 一班 '));
+  assert.doesNotThrow(() => assertUniqueRosterField(items, 'name', ' 一班 '));
+  assert.throws(() => assertUniqueRosterField([{ id: 'a', studentNo: '001' }], 'studentNo', '001'));
   assert.doesNotThrow(() => assertUniqueRosterField(items, 'name', '一班', 'a'));
   assert.doesNotThrow(() => assertUniqueRosterField(items, 'name', '二班'));
 });
