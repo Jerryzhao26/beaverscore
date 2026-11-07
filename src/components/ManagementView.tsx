@@ -1,3 +1,4 @@
+import { RosterImport } from './RosterImport';
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Student, ClassGroup } from '../types';
@@ -482,68 +483,6 @@ export const ManagementView: React.FC = () => {
     setTimeout(() => setSaveSuccessMsg(''), 3000);
   };
 
-  // Excel batch import students
-  const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async evt => {
-      try {
-        const data = evt.target?.result;
-        const XLSX = await import('xlsx');
-        const workbook = XLSX.read(data, { type: 'binary' });
-        const sheetName = workbook.SheetNames[0];
-        const rows: any[] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
-
-        if (rows.length === 0) {
-          showToast('⚠️ 导入表格内容为空，请检查文件！');
-          return;
-        }
-
-        let addedCount = 0;
-        rows.forEach(row => {
-          const name = row['姓名'] || row['学员姓名'] || row['Name'] || row['studentName'];
-          if (!name) return;
-
-          const studentNo =
-            row['学号'] || row['studentNo'] || `S${Math.floor(1000 + Math.random() * 9000)}`;
-          const gender =
-            row['性别'] === '女' || row['gender'] === 'female' ? 'female' : 'male';
-          const className = row['班级'] || row['班级名称'] || row['className'];
-          const level = row['级别'] || row['level'] || 'BF1';
-          const phone = row['联系电话'] || row['手机号'] || '';
-
-          // match class
-          let targetClassId = classes[0]?.id || '';
-          if (className) {
-            const foundClass = classes.find(c => c.name.includes(className));
-            if (foundClass) {
-              targetClassId = foundClass.id;
-            }
-          }
-
-          addStudent({
-            name: String(name).trim(),
-            studentNo: String(studentNo).trim(),
-            gender,
-            classId: targetClassId,
-            currentLevel: String(level).trim(),
-            status: 'active',
-            contactPhone: phone ? String(phone) : undefined,
-            enrolledDate: new Date().toISOString().split('T')[0]
-          });
-          addedCount++;
-        });
-
-        showToast(`🎉 成功批量导入 ${addedCount} 位新学员！`);
-      } catch (err: any) {
-        showToast('⚠️ 解析 Excel/CSV 文件失败: ' + err.message);
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
-
   // Full backup JSON download
   const handleExportFullBackup = () => {
     const jsonStr = exportDataToJson();
@@ -908,7 +847,7 @@ export const ManagementView: React.FC = () => {
                   ) : (
                     <>
                       <CloudUpload className="w-4 h-4" />
-                      {isEditingStudent ? '保存学员并加密同步至云端' : '注册学员并同步至云端'}
+                      {isEditingStudent ? '保存学员并同步至云端' : '注册学员并同步至云端'}
                     </>
                   )}
                 </button>
@@ -925,25 +864,7 @@ export const ManagementView: React.FC = () => {
               </div>
             </form>
 
-            <div className="mt-5 pt-4 border-t border-slate-100">
-              <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center">
-                <FileSpreadsheet className="w-3.5 h-3.5 mr-1 text-emerald-600" />
-                批量导入学员 (Excel / CSV)
-              </label>
-              <label className="w-full py-2 border border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-100/60 text-emerald-800 rounded-lg flex items-center justify-center font-semibold cursor-pointer transition">
-                <Upload className="w-3.5 h-3.5 mr-1.5" />
-                选择 Excel/CSV 文件导入
-                <input
-                  type="file"
-                  accept=".xlsx, .xls, .csv"
-                  onChange={handleExcelImport}
-                  className="hidden"
-                />
-              </label>
-              <p className="text-[10px] text-slate-400 mt-1">
-                支持包含表头列：【姓名】、【学号】、【性别】、【班级】、【级别】
-              </p>
-            </div>
+            <RosterImport kind="students" />
           </div>
 
           {/* Right Table: Students List with Batch Adjust and Quick Level Change */}
@@ -1364,7 +1285,7 @@ export const ManagementView: React.FC = () => {
       )}
 
       {/* 2. Classes Tab */}
-      {activeSubTab === 'classes' && (
+      {activeSubTab === 'classes' && (<><RosterImport kind="classes" />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           {/* Left Form: Add/Edit Class (Floating / Sticky) */}
           <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs h-fit lg:sticky lg:top-20 z-10 max-h-[calc(100vh-6rem)] overflow-y-auto">
@@ -1485,7 +1406,7 @@ export const ManagementView: React.FC = () => {
                   ) : (
                     <>
                       <CloudUpload className="w-4 h-4" />
-                      {isEditingClass ? '保存并加密同步至云端' : '创建班级并同步至云端'}
+                      {isEditingClass ? '保存并同步至云端' : '创建班级并同步至云端'}
                     </>
                   )}
                 </button>
@@ -1601,7 +1522,7 @@ export const ManagementView: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
+      </>) }
 
       {/* 3. System Config Tab */}
       {activeSubTab === 'system_config' && (
@@ -1829,7 +1750,7 @@ export const ManagementView: React.FC = () => {
                 GitHub Gist 云端协同引擎配置
               </h3>
               <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                只需配置 GitHub Personal Access Token (PAT)，系统即可自动将全校成绩与级别数据加密同步在您的私有 Gist 中，支持多位老师跨电脑实时录入、调级与智能合并。
+                只需配置 GitHub Personal Access Token (PAT)，系统即可自动将全校成绩与级别数据同步在您的私有 Gist 中，支持多位老师跨电脑实时录入、调级与智能合并。
               </p>
             </div>
           </div>

@@ -1,3 +1,5 @@
+import { assertUniqueRosterField } from '../utils/rosterValidation';
+import { persistItem, persistItemInBackground } from '../utils/storage';
 import { prepareScoreBatch } from '../utils/scoreEntry';
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import { Student, ClassGroup, ScoreRecord, WeakPointTagCategory, SyncLogEntry, SyncNotificationData } from '../types';
@@ -381,7 +383,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSyncLogs(prev => {
       const updated = [newEntry, ...prev].slice(0, 40);
       try {
-        localStorage.setItem(GIST_LOGS_STORAGE_KEY, JSON.stringify(updated));
+        persistItem(GIST_LOGS_STORAGE_KEY, JSON.stringify(updated));
       } catch {}
       return updated;
     });
@@ -453,42 +455,42 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const normalized = data.classes.map(normalizeClass);
       rawClassesRef.current = normalized;
       setRawClasses(normalized);
-      localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(normalized));
+      persistItem(STORAGE_KEYS.CLASSES, JSON.stringify(normalized));
     }
     if (Array.isArray(data.students)) {
       const normalized = data.students.map(normalizeStudent);
       rawStudentsRef.current = normalized;
       setRawStudents(normalized);
-      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(normalized));
+      persistItem(STORAGE_KEYS.STUDENTS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.scoreRecords)) {
       const normalized = data.scoreRecords.map(normalizeScore);
       rawScoreRecordsRef.current = normalized;
       setRawScoreRecords(normalized);
-      localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(normalized));
+      persistItem(STORAGE_KEYS.RECORDS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.levels)) {
       const normalized = Array.from(new Set(data.levels.filter(Boolean)));
       levelsRef.current = normalized;
       setLevels(normalized);
-      localStorage.setItem(STORAGE_KEYS.LEVELS, JSON.stringify(normalized));
+      persistItem(STORAGE_KEYS.LEVELS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.units)) {
       const normalized = Array.from(new Set(data.units.filter(Boolean)));
       unitsRef.current = normalized;
       setUnits(normalized);
-      localStorage.setItem(STORAGE_KEYS.UNITS, JSON.stringify(normalized));
+      persistItem(STORAGE_KEYS.UNITS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.teachers)) {
       const normalized = Array.from(new Set(data.teachers.filter(Boolean)));
       teachersRef.current = normalized;
       setTeachers(normalized);
-      localStorage.setItem(STORAGE_KEYS.TEACHERS, JSON.stringify(normalized));
+      persistItem(STORAGE_KEYS.TEACHERS, JSON.stringify(normalized));
     }
     if (Array.isArray(data.weakPointCategories)) {
       weakPointCategoriesRef.current = data.weakPointCategories;
       setWeakPointCategories(data.weakPointCategories);
-      localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(data.weakPointCategories));
+      persistItem(STORAGE_KEYS.TAGS, JSON.stringify(data.weakPointCategories));
     }
     if (data.deletedEntities && typeof data.deletedEntities === 'object') {
       const nextDeleted = {
@@ -500,7 +502,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
       deletedEntitiesRef.current = nextDeleted;
       setDeletedEntities(nextDeleted);
-      localStorage.setItem(STORAGE_KEYS.DELETED_ENTITIES, JSON.stringify(nextDeleted));
+      persistItem(STORAGE_KEYS.DELETED_ENTITIES, JSON.stringify(nextDeleted));
     }
     if (data.dictionaryAddedAt && typeof data.dictionaryAddedAt === 'object') {
       const nextAdded = {
@@ -511,7 +513,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
       dictionaryAddedAtRef.current = nextAdded;
       setDictionaryAddedAt(nextAdded);
-      localStorage.setItem(STORAGE_KEYS.DICT_ADDED, JSON.stringify(nextAdded));
+      persistItem(STORAGE_KEYS.DICT_ADDED, JSON.stringify(nextAdded));
     }
   };
 
@@ -531,7 +533,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           ? { ...record, localOnly: false, updatedAt: Math.max(Date.now(), (record.updatedAt || 0) + 1) } : record);
         rawScoreRecordsRef.current = published;
         setRawScoreRecords(published);
-        localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(published));
+        persistItem(STORAGE_KEYS.RECORDS, JSON.stringify(published));
       }
       const fullData = getFullDatabaseObject();
       const res = await pushDataToGistWithSmartMerge(tokenToUse, gistIdToUse, fullData, filenameToUse, true);
@@ -850,9 +852,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const getShareUrl = (mode: 'full' | 'readonly' = 'full') => {
     return generateGistShareUrl({
       gistId: gistConfig.gistId,
-      token: mode === 'full' ? gistConfig.token : undefined,
-      autoSync: gistConfig.autoSync,
-      autoPull: gistConfig.autoPullOnLoad,
+      autoSync: false,
+      autoPull: true,
       mode
     });
   };
@@ -1013,39 +1014,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(rawClasses));
+    persistItemInBackground(STORAGE_KEYS.CLASSES, JSON.stringify(rawClasses));
   }, [rawClasses]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(rawStudents));
+    persistItemInBackground(STORAGE_KEYS.STUDENTS, JSON.stringify(rawStudents));
   }, [rawStudents]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(rawScoreRecords));
+    persistItemInBackground(STORAGE_KEYS.RECORDS, JSON.stringify(rawScoreRecords));
   }, [rawScoreRecords]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.LEVELS, JSON.stringify(levels));
+    persistItemInBackground(STORAGE_KEYS.LEVELS, JSON.stringify(levels));
   }, [levels]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.UNITS, JSON.stringify(units));
+    persistItemInBackground(STORAGE_KEYS.UNITS, JSON.stringify(units));
   }, [units]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.TEACHERS, JSON.stringify(teachers));
+    persistItemInBackground(STORAGE_KEYS.TEACHERS, JSON.stringify(teachers));
   }, [teachers]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(weakPointCategories));
+    persistItemInBackground(STORAGE_KEYS.TAGS, JSON.stringify(weakPointCategories));
   }, [weakPointCategories]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DELETED_ENTITIES, JSON.stringify(deletedEntities));
+    persistItemInBackground(STORAGE_KEYS.DELETED_ENTITIES, JSON.stringify(deletedEntities));
   }, [deletedEntities]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DICT_ADDED, JSON.stringify(dictionaryAddedAt));
+    persistItemInBackground(STORAGE_KEYS.DICT_ADDED, JSON.stringify(dictionaryAddedAt));
   }, [dictionaryAddedAt]);
 
   // 1. Score Operations with updatedAt & soft-delete
@@ -1077,7 +1078,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const updatedRawRecords = [...newItems, ...rawScoreRecordsRef.current.filter(item => !replacedIds.has(item.id))];
     rawScoreRecordsRef.current = updatedRawRecords;
     setRawScoreRecords(updatedRawRecords);
-    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(updatedRawRecords));
+    persistItem(STORAGE_KEYS.RECORDS, JSON.stringify(updatedRawRecords));
 
     const shouldSyncCloud = options?.syncToCloud !== false;
     const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
@@ -1168,7 +1169,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           action: 'save_and_push',
           title: '成绩已入库并同步至云端 Gist',
           message: incoming > 0
-            ? `本次录入的 ${newItems.length} 条成绩已成功加密上传，并同步融合了其他老师录入的 ${incoming} 条最新成绩！`
+            ? `本次录入的 ${newItems.length} 条成绩已成功上传，并同步融合了其他老师录入的 ${incoming} 条最新成绩！`
             : `本次录入的 ${newItems.length} 条成绩已成功归档并同步保存在云端 Gist 数据库。`,
           timestamp: new Date().toLocaleTimeString('zh-CN'),
           teacherName: operatorTeacher,
@@ -1232,7 +1233,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const persistScoreRecords = (records: ScoreRecord[]) => {
     rawScoreRecordsRef.current = records;
     setRawScoreRecords(records);
-    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(records));
+    persistItem(STORAGE_KEYS.RECORDS, JSON.stringify(records));
   };
 
   const updateScoreRecord = (id: string, updated: Partial<ScoreRecord>) => {
@@ -1255,6 +1256,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // 2. Class Operations
   const addClass = (cls: Omit<ClassGroup, 'id'>): ClassGroup => {
+    assertUniqueRosterField(rawClassesRef.current, 'name', cls.name);
     const now = Date.now();
     const levelVal = cls.currentLevel || cls.level || 'BF1';
     const newClass: ClassGroup = {
@@ -1266,9 +1268,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isDeleted: false,
     };
     const nextClasses = [...rawClassesRef.current, newClass];
+    persistItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     rawClassesRef.current = nextClasses;
     setRawClasses(nextClasses);
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     return newClass;
   };
 
@@ -1286,13 +1288,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     });
     const nextClasses = [...rawClassesRef.current, ...created];
+    persistItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     rawClassesRef.current = nextClasses;
     setRawClasses(nextClasses);
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     return created;
   };
 
   const updateClass = (id: string, updated: Partial<ClassGroup>, syncStudentsLevel: boolean = true) => {
+    if (updated.name !== undefined) assertUniqueRosterField(rawClassesRef.current, 'name', updated.name, id);
     const now = Date.now();
     const effectiveLevel = updated.currentLevel || updated.level;
 
@@ -1310,9 +1313,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       return c;
     });
+    persistItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     rawClassesRef.current = nextClasses;
     setRawClasses(nextClasses);
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
 
     if (effectiveLevel && syncStudentsLevel) {
       const nextStudents = rawStudentsRef.current.map(s =>
@@ -1322,7 +1325,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       );
       rawStudentsRef.current = nextStudents;
       setRawStudents(nextStudents);
-      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
+      persistItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     }
 
     if (updated.name) {
@@ -1331,7 +1334,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       );
       rawScoreRecordsRef.current = nextRecords;
       setRawScoreRecords(nextRecords);
-      localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
+      persistItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
     }
   };
 
@@ -1341,6 +1344,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     syncStudentsLevel: boolean = true,
     options?: { teacherName?: string }
   ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport; affectedStudentCount?: number }> => {
+    if (updated.name !== undefined) assertUniqueRosterField(rawClassesRef.current, 'name', updated.name, id);
     const now = Date.now();
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
 
@@ -1451,7 +1455,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     setIsSyncingGist(true);
-    setGistLastMessage(`正在将班级【${newName}】${levelChanged ? `及 ${outgoingStudentUpdates.length} 位学员新级别` : ''}加密同步至云端...`);
+    setGistLastMessage(`正在将班级【${newName}】${levelChanged ? `及 ${outgoingStudentUpdates.length} 位学员新级别` : ''}同步至云端...`);
 
     try {
       const fullLocalData = {
@@ -1507,7 +1511,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             ? `班级主授级别已调整并同步更新 ${outgoingStudentUpdates.length} 位学员在读级别`
             : `班级设置已保存并同步至云端 Gist`,
           message: levelChanged
-            ? `班级【${newName}】主授级别已设为【${newLevel}】，已批量联动更新全班 ${outgoingStudentUpdates.length} 位学员在读级别，并成功加密上传至云端 Gist！`
+            ? `班级【${newName}】主授级别已设为【${newLevel}】，已批量联动更新全班 ${outgoingStudentUpdates.length} 位学员在读级别，并成功上传至云端 Gist！`
             : `班级【${newName}】信息已成功保存并实时同步至云端。`,
           timestamp: new Date().toLocaleTimeString('zh-CN'),
           teacherName: operatorTeacher,
@@ -1577,6 +1581,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     cls: Omit<ClassGroup, 'id'>,
     options?: { teacherName?: string }
   ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
+    assertUniqueRosterField(rawClassesRef.current, 'name', cls.name);
     const now = Date.now();
     const levelVal = cls.currentLevel || cls.level || 'BF1';
     const newClass: ClassGroup = {
@@ -1589,9 +1594,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     const nextClasses = [...rawClassesRef.current, newClass];
+    persistItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     rawClassesRef.current = nextClasses;
     setRawClasses(nextClasses);
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
 
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
     const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
@@ -1619,7 +1624,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     setIsSyncingGist(true);
-    setGistLastMessage(`正在将新班级【${newClass.name}】加密同步至云端...`);
+    setGistLastMessage(`正在将新班级【${newClass.name}】同步至云端...`);
 
     try {
       const fullLocalData = {
@@ -1672,7 +1677,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           type: 'success',
           action: 'save_and_push',
           title: `新班级【${newClass.name}】已创建并同步云端`,
-          message: `班级【${newClass.name}】（主授级别: ${levelVal}）已成功创建并加密同步至云端 Gist。`,
+          message: `班级【${newClass.name}】（主授级别: ${levelVal}）已成功创建并同步至云端 Gist。`,
           timestamp: new Date().toLocaleTimeString('zh-CN'),
           teacherName: operatorTeacher,
           gistId: gistConfig.gistId,
@@ -1732,20 +1737,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const nextClasses = rawClassesRef.current.map(c =>
       c.id === id ? { ...c, isDeleted: true, updatedAt: now } : c
     );
+    persistItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
     rawClassesRef.current = nextClasses;
     setRawClasses(nextClasses);
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(nextClasses));
 
     const nextStudents = rawStudentsRef.current.map(s =>
       s.classId === id ? { ...s, classId: '', updatedAt: now } : s
     );
+    persistItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     rawStudentsRef.current = nextStudents;
     setRawStudents(nextStudents);
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
   };
 
   // 3. Student Operations
   const addStudent = (student: Omit<Student, 'id'>): Student => {
+    assertUniqueRosterField(rawStudentsRef.current, 'studentNo', student.studentNo);
     const now = Date.now();
     const isSuspended = student.status === 'suspended';
     const newStudent: Student = {
@@ -1759,9 +1765,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       suspendedAt: isSuspended ? (student.suspendedAt || new Date().toISOString().split('T')[0]) : undefined
     };
     const nextStudents = [...rawStudentsRef.current, newStudent];
+    persistItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     rawStudentsRef.current = nextStudents;
     setRawStudents(nextStudents);
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     return newStudent;
   };
 
@@ -1769,6 +1775,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     student: Omit<Student, 'id'>,
     options?: { teacherName?: string }
   ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
+    assertUniqueRosterField(rawStudentsRef.current, 'studentNo', student.studentNo);
     const now = Date.now();
     const isSuspended = student.status === 'suspended';
     const newStudent: Student = {
@@ -1783,9 +1790,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     const nextStudents = [...rawStudentsRef.current, newStudent];
+    persistItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     rawStudentsRef.current = nextStudents;
     setRawStudents(nextStudents);
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
 
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
     const isCloudReady = Boolean(gistConfig.token && gistConfig.gistId);
@@ -1865,7 +1872,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           type: 'success',
           action: 'save_and_push',
           title: `学员【${newStudent.name}】已建档并同步云端`,
-          message: `学员【${newStudent.name}】（级别: ${newStudent.currentLevel}）已成功注册入库并加密同步至云端 Gist。`,
+          message: `学员【${newStudent.name}】（级别: ${newStudent.currentLevel}）已成功注册入库并同步至云端 Gist。`,
           timestamp: new Date().toLocaleTimeString('zh-CN'),
           teacherName: operatorTeacher,
           gistId: gistConfig.gistId,
@@ -1920,6 +1927,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateStudent = (id: string, updated: Partial<Student>) => {
+    if (updated.studentNo !== undefined) assertUniqueRosterField(rawStudentsRef.current, 'studentNo', updated.studentNo, id);
     const now = Date.now();
     const prevStudent = rawStudents.find(s => s.id === id);
     const finalUpdated: Partial<Student> = { ...updated };
@@ -1954,6 +1962,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     updated: Partial<Student>,
     options?: { teacherName?: string }
   ): Promise<{ success: boolean; message: string; mergeReport?: MergeReport }> => {
+    if (updated.studentNo !== undefined) assertUniqueRosterField(rawStudentsRef.current, 'studentNo', updated.studentNo, id);
     const now = Date.now();
     const operatorTeacher = options?.teacherName || gistConfig.teacherName || '任课教师';
 
@@ -2084,7 +2093,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             ? `学员【${studentName}】在读级别已调整为【${newLevel}】并同步云端`
             : `学员【${studentName}】档案已保存并同步至云端`,
           message: levelChanged
-            ? `学员【${studentName}】在读级别由【${oldLevel}】调整为【${newLevel}】，已成功更新并加密同步至云端 Gist！`
+            ? `学员【${studentName}】在读级别由【${oldLevel}】调整为【${newLevel}】，已成功更新并同步至云端 Gist！`
             : `学员【${studentName}】档案信息已成功保存并实时同步至云端。`,
           timestamp: new Date().toLocaleTimeString('zh-CN'),
           teacherName: operatorTeacher,
@@ -2255,7 +2264,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           type: 'success',
           action: 'save_and_push',
           title: `已批量调整 ${outgoingStudentUpdates.length} 位学员在读级别为【${newLevel}】并同步云端`,
-          message: `已批量调整 ${outgoingStudentUpdates.length} 位学员的在读级别为【${newLevel}】，并成功加密上传至云端 Gist！`,
+          message: `已批量调整 ${outgoingStudentUpdates.length} 位学员的在读级别为【${newLevel}】，并成功上传至云端 Gist！`,
           timestamp: new Date().toLocaleTimeString('zh-CN'),
           teacherName: operatorTeacher,
           gistId: gistConfig.gistId,
@@ -2317,16 +2326,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const nextStudents = rawStudentsRef.current.map(s =>
       s.id === id ? { ...s, isDeleted: true, updatedAt: now } : s
     );
+    persistItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     rawStudentsRef.current = nextStudents;
     setRawStudents(nextStudents);
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
 
     const nextRecords = rawScoreRecordsRef.current.map(r =>
       r.studentId === id ? { ...r, isDeleted: true, updatedAt: now } : r
     );
     rawScoreRecordsRef.current = nextRecords;
     setRawScoreRecords(nextRecords);
-    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
+    persistItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
   };
 
   const batchAddStudents = (newStudentsList: Omit<Student, 'id'>[]) => {
@@ -2339,9 +2348,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       status: s.status || 'active'
     }));
     const nextStudents = [...rawStudentsRef.current, ...created];
+    persistItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     rawStudentsRef.current = nextStudents;
     setRawStudents(nextStudents);
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
   };
 
   const batchDeleteStudents = (studentIds: string[]) => {
@@ -2351,16 +2360,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const nextStudents = rawStudentsRef.current.map(s =>
       idSet.has(s.id) ? { ...s, isDeleted: true, updatedAt: now } : s
     );
+    persistItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
     rawStudentsRef.current = nextStudents;
     setRawStudents(nextStudents);
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(nextStudents));
 
     const nextRecords = rawScoreRecordsRef.current.map(r =>
       idSet.has(r.studentId) ? { ...r, isDeleted: true, updatedAt: now } : r
     );
     rawScoreRecordsRef.current = nextRecords;
     setRawScoreRecords(nextRecords);
-    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
+    persistItem(STORAGE_KEYS.RECORDS, JSON.stringify(nextRecords));
   };
 
   const transferStudent = (
