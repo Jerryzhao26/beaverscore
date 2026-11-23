@@ -1,7 +1,7 @@
 import { classLabel } from '../utils/classLabel';
 import { ConfirmDialog } from './ConfirmDialog';
 import { EntryRowState, emptyEntryRow, hasEntryInput, isValidScoreInput, fillEmptyScores, sameExam, entryDraftKey, readEntryDraft, restoreEntryRows, getLocalDate } from '../utils/scoreEntry';
-import { getScorePercentage, getPercentageDelta, areComparableExams } from '../utils/analysis';
+import { getScorePercentage, getPercentageDelta, areComparableExams, roundScore } from '../utils/analysis';
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { ScoreRecord, Student } from '../types';
@@ -702,6 +702,8 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
         </div>
       </div>
 
+      <p className="text-xs text-indigo-700">请选择本次考试满分，再按原卷录入。50 分制的 45 分会自动折算为 90 分，曲线与统计统一使用百分制，原始分数保留。</p>
+
       {/* Quick Batch Toolkit Bar */}
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex flex-wrap items-center gap-4">
@@ -925,7 +927,7 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                                 ) : row.score.trim() === '' ? (
                                   <span className="text-slate-400">⚡ 留空本次不保存</span>
                                 ) : (
-                                  <span className="text-emerald-600 font-medium">✓ 录入 {row.score} 分</span>
+                                  <span className="text-emerald-600 font-medium">✓ 原始 {row.score} / {maxScore} 分{isValidScoreInput(row.score, maxScore) ? ` · 百分制 ${roundScore(Number(row.score) / maxScore * 100)} 分` : ' · 超出满分范围'}</span>
                                 )}
                               </div>
                             </div>

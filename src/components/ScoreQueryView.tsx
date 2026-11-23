@@ -568,6 +568,7 @@ export const ScoreQueryView: React.FC = () => {
                             }`}
                           >
                             {record.score} / {record.maxScore ?? 100} 分
+                            {(record.maxScore ?? 100) !== 100 && getScorePercentage(record) !== null && <span className="block text-[11px] font-normal">百分制 {roundScore(getScorePercentage(record)!)} 分</span>}
                           </span>
                         ) : (
                           <span className="inline-block px-2.5 py-1 rounded-full text-xs text-slate-400 bg-slate-100">
@@ -796,7 +797,7 @@ export const ScoreQueryView: React.FC = () => {
                       setEditingRecord({
                         ...editingRecord,
                         attendance: att,
-                        score: att === 'present' ? (editingRecord.score ?? 85) : null
+                        score: att === 'present' ? (editingRecord.score ?? Math.min(85, editingRecord.maxScore ?? 100)) : null
                       });
                     }}
                     className="w-full p-2 border border-slate-300 rounded-lg text-sm text-slate-800 cursor-pointer"
@@ -807,12 +808,15 @@ export const ScoreQueryView: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">得分 (0-100)</label>
+                  <label className="block font-semibold text-slate-700 mb-1">得分 (0–{editingRecord.maxScore ?? 100})</label>
                   <input
                     type="number"
+                    min={0}
+                    max={editingRecord.maxScore ?? 100}
+                    step="any"
                     disabled={editingRecord.attendance !== 'present'}
                     value={editingRecord.attendance === 'present' ? (editingRecord.score ?? '') : ''}
-                    placeholder={editingRecord.attendance === 'present' ? '0-100' : '缺考不计分'}
+                    placeholder={editingRecord.attendance === 'present' ? `0–${editingRecord.maxScore ?? 100}` : '缺考不计分'}
                     onChange={e =>
                       setEditingRecord({
                         ...editingRecord,
@@ -822,6 +826,24 @@ export const ScoreQueryView: React.FC = () => {
                     className="w-full p-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-800 disabled:bg-slate-100 disabled:text-slate-400"
                   />
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                <label className="block font-semibold text-slate-700" htmlFor="edit-max-score">本次考试满分</label>
+                <input
+                  id="edit-max-score"
+                  type="number"
+                  min={0.01}
+                  step="any"
+                  required
+                  value={editingRecord.maxScore ?? 100}
+                  onChange={e => setEditingRecord({ ...editingRecord, maxScore: e.target.value === '' ? 0 : Number(e.target.value) })}
+                  className="w-28 p-2 border border-slate-300 rounded-lg text-sm text-slate-800"
+                />
+                <p className="text-xs text-indigo-800">历史成绩若按 50 分制录入，请将满分改为 50，原始得分保持不变。保存后曲线和统计自动更新。</p>
+                <p className="text-xs font-semibold text-indigo-800">
+                  百分制：{getScorePercentage(editingRecord) === null ? '暂无有效得分' : `${roundScore(getScorePercentage(editingRecord)!)} 分`}
+                </p>
               </div>
 
               <div className="grid grid-cols-3 gap-3">

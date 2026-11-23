@@ -190,3 +190,23 @@ test('incomplete file lists and unreadable journals stop sync', async () => {
     assert.equal(patches, 0);
   }
 });
+
+
+test('50-point entries and corrected historical maxima yield a consistent 100-point trend', () => {
+  const previous = score('previous', 80, 100, '2026-09-01');
+  const entry = score('fifty', 45, 50, '2026-09-02');
+  const saved = prepareScoreBatch([entry], [], { syncToCloud: false })[0];
+  assert.equal(saved.score, 45);
+  assert.equal(saved.maxScore, 50);
+  assert.equal(getScorePercentage(saved), 90);
+  const stats = calculateStudentStats([student], [previous, saved])[0];
+  assert.equal(stats.averageScore, 85);
+  assert.equal(stats.scoreDelta, 10);
+  assert.equal(stats.topScoreCount, 1);
+  const historical = { ...entry, maxScore: 100 };
+  assert.equal(getScorePercentage(historical), 45);
+  assert.equal(getScorePercentage({ ...historical, maxScore: 50 }), 90);
+  assert.equal(getScorePercentage(score('low-percent', 45, 100)), 45);
+  assert.equal(getScorePercentage({ ...entry, attendance: 'absent', score: null }), null);
+  assert.throws(() => prepareScoreBatch([score('too-high', 51, 50)], []), /无效/);
+});

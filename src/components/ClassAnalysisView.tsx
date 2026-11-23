@@ -235,7 +235,7 @@ export const ClassAnalysisView: React.FC = () => {
               <LineChart data={unitTrendData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="unit" tick={{ fontSize: 10 }} />
-                <YAxis domain={[50, 100]} tick={{ fontSize: 11 }} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#1e293b', color: '#fff', borderRadius: '8px', fontSize: '12px' }}
                 />
