@@ -927,7 +927,10 @@ export const ScoreEntryView: React.FC<{ onNavigateToQuery?: () => void; onNaviga
                                 ) : row.score.trim() === '' ? (
                                   <span className="text-slate-400">⚡ 留空本次不保存</span>
                                 ) : (
-                                  <span className="text-emerald-600 font-medium">✓ 原始 {row.score} / {maxScore} 分{isValidScoreInput(row.score, maxScore) ? ` · 百分制 ${roundScore(Number(row.score) / maxScore * 100)} 分` : ' · 超出满分范围'}</span>
+                                  <span className="text-emerald-600">
+                                    <span className="block text-sm font-bold">{isValidScoreInput(row.score, maxScore) ? `百分制 ${roundScore(Number(row.score) / maxScore * 100)} 分` : '超出满分范围'}</span>
+                                    {maxScore !== 100 && <span className="block text-[11px] font-normal text-slate-500">原始 {row.score} / {maxScore} 分</span>}
+                                  </span>
                                 )}
                               </div>
                             </div>
