@@ -101,11 +101,8 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-1.5">
-                  EduTrack Pro{' '}
-                  <span className="hidden sm:inline font-normal text-slate-400 text-sm">
-                    | 培训机构双轨成绩管理系统
-                  </span>
+                <h1 className="text-base sm:text-xl font-bold tracking-tight text-slate-900 flex items-center gap-1.5">
+                  比伯斯分数统计系统
                 </h1>
               </div>
               <p className="text-[11px] text-slate-500 hidden md:block">

@@ -74,7 +74,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
     return filteredRecords.map(r => ({
       name: `${r.level} ${r.unit}`,
       date: r.examDate,
-      score: getScorePercentage(r),
+      score: getScorePercentage(r) === null ? null : roundScore(getScorePercentage(r)!),
       category: getExamCategoryLabel(r.examCategory),
       title: r.examTitle
     }));
@@ -231,7 +231,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
           <div className="bg-white rounded-xl border border-slate-200 p-4">
             <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center">
               <TrendingUp className="w-4 h-4 mr-1.5 text-indigo-600" />
-              历史测验成绩曲线与发展轨迹
+              历史测验成绩曲线（百分制）
             </h3>
 
             {chartData.length < 2 ? (
@@ -244,7 +244,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
                   <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                    <YAxis domain={[50, 100]} tick={{ fontSize: 11 }} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: '#0f172a',
@@ -256,7 +256,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
                     <Line
                       type="monotone"
                       dataKey="score"
-                      name="得分率 (%)"
+                      name="百分制得分"
                       stroke="#4f46e5"
                       strokeWidth={3}
                       dot={{ r: 5, fill: '#4f46e5' }}
@@ -345,6 +345,7 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
                             }`}
                           >
                             {r.score} / {r.maxScore ?? 100} 分
+                            {(r.maxScore ?? 100) !== 100 && getScorePercentage(r) !== null && <span className="block text-[11px] font-normal">百分制 {roundScore(getScorePercentage(r)!)} 分</span>}
                           </span>
                         ) : (
                           <span className="text-slate-400">
