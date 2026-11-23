@@ -195,10 +195,11 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
             </div>
 
             <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3.5 text-center">
-              <div className="text-xs text-blue-700 font-semibold">最新阶段考得分</div>
+              <div className="text-xs text-blue-700 font-semibold">最新阶段考得分（百分制）</div>
               <div className="text-2xl font-black text-blue-900 mt-1">
-                {latestRecord?.score !== null && latestRecord?.score !== undefined ? `${latestRecord.score} / ${latestRecord.maxScore ?? 100} 分` : '-'}
+                {latestRecord && getScorePercentage(latestRecord) !== null ? `${roundScore(getScorePercentage(latestRecord)!)} 分` : '-'}
               </div>
+              {latestRecord && (latestRecord.maxScore ?? 100) !== 100 && getScorePercentage(latestRecord) !== null && <div className="text-[11px] font-normal text-blue-600/80 mt-0.5">原始 {latestRecord.score} / {latestRecord.maxScore} 分</div>}
               <div className="text-[11px] text-blue-600/80 mt-0.5">
                 {latestRecord ? `${latestRecord.level} ${latestRecord.unit}` : '暂无'}
               </div>
@@ -344,8 +345,8 @@ export const StudentReportModal: React.FC<StudentReportModalProps> = ({
                                 : 'bg-rose-100 text-rose-800'
                             }`}
                           >
-                            {r.score} / {r.maxScore ?? 100} 分
-                            {(r.maxScore ?? 100) !== 100 && getScorePercentage(r) !== null && <span className="block text-[11px] font-normal">百分制 {roundScore(getScorePercentage(r)!)} 分</span>}
+                            <span className="block text-sm font-bold">{getScorePercentage(r) === null ? '-' : `${roundScore(getScorePercentage(r)!)} 分`}</span>
+                            {(r.maxScore ?? 100) !== 100 && <span className="block text-[11px] font-normal opacity-75">原始 {r.score} / {r.maxScore ?? 100} 分</span>}
                           </span>
                         ) : (
                           <span className="text-slate-400">

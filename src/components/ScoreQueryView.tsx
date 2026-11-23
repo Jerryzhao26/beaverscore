@@ -233,7 +233,7 @@ export const ScoreQueryView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <p className="text-xs text-slate-500">统计、分数区间和进退步按满分折算为百分制；明细显示原始分数。</p>
+      <p className="text-xs text-slate-500">统计、分数区间和进退步按满分折算为百分制；成绩上方显示百分制分数，下方小字显示原始分数。</p>
       {/* Top Quick Cloud Sync Action Bar */}
       <CloudSyncButtons variant="toolbar" />
 
@@ -567,8 +567,8 @@ export const ScoreQueryView: React.FC = () => {
                                 : 'bg-rose-100 text-rose-800'
                             }`}
                           >
-                            {record.score} / {record.maxScore ?? 100} 分
-                            {(record.maxScore ?? 100) !== 100 && getScorePercentage(record) !== null && <span className="block text-[11px] font-normal">百分制 {roundScore(getScorePercentage(record)!)} 分</span>}
+                            <span className="block text-sm font-bold">{getScorePercentage(record) === null ? '-' : `${roundScore(getScorePercentage(record)!)} 分`}</span>
+                            {(record.maxScore ?? 100) !== 100 && <span className="block text-[11px] font-normal opacity-75">原始 {record.score} / {record.maxScore ?? 100} 分</span>}
                           </span>
                         ) : (
                           <span className="inline-block px-2.5 py-1 rounded-full text-xs text-slate-400 bg-slate-100">
@@ -705,7 +705,8 @@ export const ScoreQueryView: React.FC = () => {
                     </div>
                     <div>
                       <div className="text-slate-400 text-[10px]">最新测评</div>
-                      <div className="font-bold text-slate-800 text-sm">{latest?.score ?? '-'} / {latest?.maxScore ?? 100}分</div>
+                      <div className="font-bold text-slate-800 text-sm">{latest && getScorePercentage(latest) !== null ? `${roundScore(getScorePercentage(latest)!)} 分` : '-'}</div>
+                      {latest && (latest.maxScore ?? 100) !== 100 && <div className="text-[10px] text-slate-500">原始 {latest.score} / {latest.maxScore} 分</div>}
                     </div>
                     <div>
                       <div className="text-slate-400 text-[10px]">近期变动</div>
